@@ -21,7 +21,7 @@ class ListsSuite extends munit.FunSuite {
   }
 
   test("one plus one is three (0pts)?") {
-    assert(1 + 1 == 3) // This assertion fails! Go ahead and fix it.
+    assert(1 + 1 != 3) // This assertion fails! fixed
   }
 
   /**
@@ -57,11 +57,11 @@ class ListsSuite extends munit.FunSuite {
    * when writing tests.
    */
   test("details why one plus one is not three (0pts)") {
-    assertEquals(1 + 1, 3) // Fix me, please!
+    assertNotEquals(1 + 1, 3) // fixed
   }
 
   /**
-   * Exceptional behavior of a methods can be tested using a try/catch
+   * Exceptional behavior of a method can be tested using a try/catch
    * and a failed assertion.
    *
    * In the following example, we test the fact that the method `intNotZero`
@@ -72,7 +72,7 @@ class ListsSuite extends munit.FunSuite {
        intNotZero(0)
        fail("No exception has been thrown")
      } catch {
-       case e: IllegalArgumentException => ()
+       case _: IllegalArgumentException => ()
      }
    }
 
@@ -83,7 +83,7 @@ class ListsSuite extends munit.FunSuite {
 
   /**
    * Now we finally write some tests for the list functions that have to be
-   * implemented for this assignment. We fist import all members of the
+   * implemented for this assignment. We first import all members of the
    * `List` object.
    */
   import Lists._
@@ -104,12 +104,40 @@ class ListsSuite extends munit.FunSuite {
     assert(sum(List(1,2,0)) == 3)
   }
 
+  test("sum of empty list = 0") {
+    assertEquals(sum(List()), 0)
+  }
+
+  test("sum of negative numbers is correct") {
+    assertEquals(sum(List(-2, -2, -2)), -6)
+  }
+
+  test("sum of zeros is zero") {
+    assertEquals(sum(List(0,0,0,0,0,0,0,0,0,0,0,0,0)), 0)
+  }
+
   test("max of a few numbers (10pts)") {
     assert(max(List(3, 7, 2)) == 7)
+  }
+
+  test("max of negative numbers is correct") {
+    assertEquals(max(List(-3,-2,-5,-3)), -2)
+  }
+
+  test("max of repeated numbers is correct") {
+    assertEquals(max(List(-1,-1,-2,-2,-3,-1,-3)), -1)
+  }
+
+  test("max of zeros is correct") {
+    assertEquals(max(List(0,0,0,0,0,0,0,0,0,0)),0)
+  }
+
+  test("max of empty list throws NoSuchElementException") {
+    intercept[NoSuchElementException](max(List()))
   }
 
 
 
   import scala.concurrent.duration._
-  override val munitTimeout = 1.seconds
+  override val munitTimeout: FiniteDuration = 1.seconds
 }
