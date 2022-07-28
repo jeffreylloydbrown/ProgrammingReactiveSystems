@@ -1,9 +1,8 @@
 package async
 
-import scala.concurrent.{Future, Promise}
+import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.util.Try
-import scala.util.control.NonFatal
 
 object Async extends AsyncInterface {
 
@@ -65,7 +64,10 @@ object Async extends AsyncInterface {
     * are eventually performed.
     */
   def insist[A](makeAsyncComputation: () => Future[A], maxAttempts: Int): Future[A] =
-    ???
+    makeAsyncComputation().recoverWith {
+      case _ if maxAttempts > 1 =>
+        insist(makeAsyncComputation, maxAttempts-1)
+    }
 
   /**
     * Turns a callback-based API into a Future-based API
