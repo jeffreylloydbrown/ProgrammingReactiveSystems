@@ -1,8 +1,8 @@
 package async
 
-import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
-import scala.util.Try
+import scala.concurrent.{Future, Promise}
+import scala.util.{Failure, Success, Try}
 
 object Async extends AsyncInterface {
 
@@ -35,9 +35,9 @@ object Async extends AsyncInterface {
     * second asynchronous computations, paired together.
     */
   def sequenceComputations[A, B](
-    makeAsyncComputation1: () => Future[A],
-    makeAsyncComputation2: () => Future[B]
-  ): Future[(A, B)] =
+                                  makeAsyncComputation1: () => Future[A],
+                                  makeAsyncComputation2: () => Future[B]
+                                ): Future[(A, B)] =
     for (async1 <- makeAsyncComputation1();
          async2 <- makeAsyncComputation2())
     yield (async1, async2)
@@ -49,9 +49,9 @@ object Async extends AsyncInterface {
     * If one of them fails, this method should return the failure.
     */
   def concurrentComputations[A, B](
-    makeAsyncComputation1: () => Future[A],
-    makeAsyncComputation2: () => Future[B]
-  ): Future[(A, B)] = {
+                                    makeAsyncComputation1: () => Future[A],
+                                    makeAsyncComputation2: () => Future[B]
+                                  ): Future[(A, B)] = {
     val async1Result = makeAsyncComputation1()
     val async2Result = makeAsyncComputation2()
     for (async1 <- async1Result; async2 <- async2Result) yield (async1, async2)
@@ -76,8 +76,16 @@ object Async extends AsyncInterface {
     *
     * Hint: Use a `Promise`
     */
-  def futurize(callbackBasedApi: CallbackBasedApi): FutureBasedApi =
-    ???
+  def futurize(callbackBasedApi: CallbackBasedApi): FutureBasedApi = () => {
+    val p = Promise[Int]()
+    callbackBasedApi.computeIntAsync {
+      case Success(value) =>
+        p.success(value)
+      case Failure(exc) =>
+        p.failure(exc)
+    }
+    p.future
+  }
 
 }
 
