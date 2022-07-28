@@ -24,7 +24,7 @@ object Async extends AsyncInterface {
     * should return a successful `Future` with the same value.
     */
   def recoverFailure(eventuallyX: Future[Int]): Future[Int] =
-    ???
+    eventuallyX.recover{ case _ => -1 }
 
   /**
     * Perform two asynchronous computation, one after the other. `makeAsyncComputation2`
@@ -39,7 +39,9 @@ object Async extends AsyncInterface {
     makeAsyncComputation1: () => Future[A],
     makeAsyncComputation2: () => Future[B]
   ): Future[(A, B)] =
-    ???
+    for (async1 <- makeAsyncComputation1();
+         async2 <- makeAsyncComputation2())
+    yield (async1, async2)
 
   /**
     * Concurrently perform two asynchronous computations and pair their successful
@@ -50,8 +52,11 @@ object Async extends AsyncInterface {
   def concurrentComputations[A, B](
     makeAsyncComputation1: () => Future[A],
     makeAsyncComputation2: () => Future[B]
-  ): Future[(A, B)] =
-    ???
+  ): Future[(A, B)] = {
+    val async1Result = makeAsyncComputation1()
+    val async2Result = makeAsyncComputation2()
+    for (async1 <- async1Result; async2 <- async2Result) yield (async1, async2)
+  }
 
   /**
     * Attempt to perform an asynchronous computation.
