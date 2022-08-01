@@ -119,9 +119,6 @@ _A word on Actor counts:_
 - The grader verifies that enough Actors are created when inserting elements.
     
 - The grader also verifies that enough Actors are stopped in response to a GC command (i.e. for those elements that were previously marked removed from the set).
-
-### Don't Forget
-Make sure to create a Run Configuration for your IDE that is similar to what the course videos show.
     
 
 ### How to submit
