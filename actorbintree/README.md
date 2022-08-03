@@ -119,7 +119,10 @@ _A word on Actor counts:_
 - The grader verifies that enough Actors are created when inserting elements.
     
 - The grader also verifies that enough Actors are stopped in response to a GC command (i.e. for those elements that were previously marked removed from the set).
-    
+
+### Note on IntelliJ
+
+If you decide to use LoggingReceive (as shown in the lectures) and you use IntelliJ, add _-Dakka.loglevel=DEBUG -Dakka.actor.debug.receive=on_ to the _VM Options_ field of the Run Configuration, not to the _Program arguments_ field.
 
 ### How to submit
 
