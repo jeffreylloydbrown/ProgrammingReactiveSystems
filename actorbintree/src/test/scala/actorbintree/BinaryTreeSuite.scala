@@ -40,6 +40,23 @@ class BinaryTreeSuite extends munit.FunSuite with TestKitBase with ImplicitSende
     // the grader also verifies that enough actors are created
   }
 
+  test("new tree reads as empty (even though it has a deleted node)") {
+    val topNode = system.actorOf(Props[BinaryTreeSet]())
+
+    topNode ! Contains(testActor, id = 1, 0)
+    expectMsg(ContainsResult(1, result = false))
+  }
+
+  test("inserting the 'removed' element of a new tree makes it found") {
+    val topNode = system.actorOf(Props[BinaryTreeSet]())
+
+    topNode ! Insert(testActor, id = 1, 0)
+    expectMsg(OperationFinished(id = 1))
+
+    topNode ! Contains(testActor, id = 2, 0)
+    expectMsg(ContainsResult(id = 2, result = true))
+  }
+
   test("proper inserts and lookups (5pts)") {
     val topNode = system.actorOf(Props[BinaryTreeSet]())
 
