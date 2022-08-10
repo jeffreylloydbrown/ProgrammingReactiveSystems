@@ -4,6 +4,8 @@
 package actorbintree
 
 import akka.actor._
+import akka.event.LoggingReceive
+
 import scala.collection.immutable.Queue
 
 object BinaryTreeSet {
@@ -50,13 +52,13 @@ object BinaryTreeSet {
 }
 
 
-class BinaryTreeSet extends Actor {
+class BinaryTreeSet extends Actor with ActorLogging {
   import BinaryTreeSet._
-  import BinaryTreeNode._
 
   val defaultRootElement = 0
 
-  def createRoot: ActorRef = context.actorOf(Props(classOf[BinaryTreeNode], defaultRootElement, true))
+  def createRoot: ActorRef = context.actorOf(Props(classOf[BinaryTreeNode], defaultRootElement, true),
+    s"root-elem-$defaultRootElement")
 
   var root: ActorRef = createRoot
 
@@ -70,14 +72,11 @@ class BinaryTreeSet extends Actor {
   /** Accepts `Operation` and `GC` messages. */
   val normal: Receive = LoggingReceive {
     case Contains(requester, id, elem) =>
+      log.debug("forwarding Contains({}, {}, {}) to {}", requester, id, elem, root)
       root ! Contains(requester, id, elem)
     case Insert(requester, id, elem) =>
+      log.debug("forwarding Insert({}, {}, {}) to {}", requester, id, elem, root)
       root ! Insert(requester, id, elem)
-
-    case reply: OperationReply =>
-      println(s"BinaryTreeSet received $reply from $sender")
-      println(s"BinaryTreeSet sending that reply to ${context.parent}")
-      context.parent ! reply
 
     case _ => ???
   }
@@ -105,22 +104,90 @@ object BinaryTreeNode {
    */
   case object CopyFinished
 
-  def props(elem: Int, initiallyRemoved: Boolean) = Props(classOf[BinaryTreeNode],  elem, initiallyRemoved)
 }
 
-class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor {
+class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor with ActorLogging {
   import BinaryTreeNode._
   import BinaryTreeSet._
 
-  var subtrees = Map[Position, ActorRef]()
-  var removed = initiallyRemoved
+  def receive: Receive = normal(Map[Position, ActorRef](), initiallyRemoved)
 
-  // optional
-  def receive = normal
+  private def searchSubTree(requester: ActorRef,
+                            subtrees: Map[Position, ActorRef],
+                            p: Position, id: Int, searchingForElem: Int): Unit =
+    subtrees.get(p) match {
+      case Some(subtree) =>
+        val c = Contains(requester, id, searchingForElem)
+        log.debug("searchSubTree-{}: forwarding {} to {}", p, c, subtree)
+        subtree ! c
+      case None =>
+        val c = ContainsResult(id, result = false)
+        log.debug("searchSubTree-{}, no subtree, returning {} to {}", p, c, requester)
+        requester ! c
+    }
 
-  // optional
+  private def insertSubTree(requester: ActorRef,
+                            subtrees: Map[Position, ActorRef],
+                            removed: Boolean,
+                            p: Position, id: Int, newElem: Int): Unit = {
+    subtrees.get(p) match {
+      case Some(subtree) =>
+        val i = Insert(requester, id, newElem)
+        log.debug("Insert into {} subtree: send {} to {}", p,i, subtree)
+        subtree ! i
+      case None =>
+        val newNode = context.actorOf(Props(classOf[BinaryTreeNode], newElem, false),
+          s"elem-$newElem")
+        log.debug("no {} subtree, add new actor {}", p,newNode)
+        val newSubTrees = subtrees + (p -> newNode)
+        context.become(normal(newSubTrees, removed))
+        log.debug("context set to normal({}, {})", newSubTrees, removed)
+        requester ! OperationFinished(id)
+        log.debug("Insert sent OperationFinished({}) to {}", id, requester)
+    }
+  }
+
   /** Handles `Operation` messages and `CopyTo` requests. */
-  val normal: Receive = { case _ => ??? }
+  def normal(subtrees: Map[Position, ActorRef], removed: Boolean): Receive = LoggingReceive {
+    case Contains(requester, id, searchingForElem) if searchingForElem == elem =>
+      log.debug("Contains id{}, subtrees = {}, removed = {}", id, subtrees, removed)
+      val c = ContainsResult(id, ! removed)
+      log.debug("Contains found {}, removed = {}, sending {} to {}",
+        elem, removed, c, requester)
+      requester ! c
+    case Contains(requester, id, searchingForElem) if searchingForElem < elem =>
+      log.debug("Contains id{} searchingFor < elem, subtrees = {}, removed = {}, search left",
+        id, subtrees, removed)
+      searchSubTree(requester, subtrees, Left, id, searchingForElem)
+    case Contains(requester, id, searchingForElem) =>
+      log.debug("Contains id{} searchingFor > elem, subtrees = {}, removed = {}, search right",
+        id, subtrees, removed)
+      searchSubTree(requester, subtrees, Right, id, searchingForElem)
+
+    case Insert(requester, id, newElem) if newElem == elem && ! removed =>
+      log.debug("Insert id{}, subtrees = {}, removed = {}", id, subtrees, removed)
+      log.debug("id{} elem {} found, sent OperationFinished({}) to {}",
+        id, newElem, id, requester)
+      requester ! OperationFinished(id)
+      log.debug("Insert sent OperationFinished({}) to {}", id, requester)
+    case Insert(requester, id, newElem) if newElem == elem =>
+      log.debug("Insert id{}, subtrees = {}, removed = {}", id, subtrees, removed)
+      log.debug("id{} elem {} found but was removed, undeleting it", id, newElem)
+      context.become(normal(subtrees, removed = false))
+      log.debug("context set to normal({}, false)", subtrees)
+      requester ! OperationFinished(id)
+      log.debug("Insert sent OperationFinished({}) to {}", id, requester)
+    case Insert(requester, id, newElem) if newElem < elem =>
+      log.debug("Insert id{} elem {}, subtrees = {}, removed = {}, go left",
+        id, newElem, subtrees, removed)
+      insertSubTree(requester, subtrees, removed, Left, id, newElem)
+    case Insert(requester, id, newElem) =>
+      log.debug("Insert id{} elem {}, subtrees = {}, removed = {}, go right",
+        id, newElem, subtrees, removed)
+      insertSubTree(requester, subtrees, removed, Right, id, newElem)
+
+    case _ => ???
+  }
 
   // optional
   /** `expected` is the set of ActorRefs whose replies we are waiting for,
