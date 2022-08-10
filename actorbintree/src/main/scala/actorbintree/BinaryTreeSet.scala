@@ -54,19 +54,33 @@ class BinaryTreeSet extends Actor {
   import BinaryTreeSet._
   import BinaryTreeNode._
 
-  def createRoot: ActorRef = context.actorOf(BinaryTreeNode.props(0, initiallyRemoved = true))
+  val defaultRootElement = 0
 
-  var root = createRoot
+  def createRoot: ActorRef = context.actorOf(Props(classOf[BinaryTreeNode], defaultRootElement, true))
+
+  var root: ActorRef = createRoot
 
   // optional (used to stash incoming operations during garbage collection)
-  var pendingQueue = Queue.empty[Operation]
+  var pendingQueue: Queue[Operation] = Queue.empty[Operation]
 
   // optional
-  def receive = normal
+  def receive: Receive = normal
 
   // optional
   /** Accepts `Operation` and `GC` messages. */
-  val normal: Receive = { case _ => ??? }
+  val normal: Receive = LoggingReceive {
+    case Contains(requester, id, elem) =>
+      root ! Contains(requester, id, elem)
+    case Insert(requester, id, elem) =>
+      root ! Insert(requester, id, elem)
+
+    case reply: OperationReply =>
+      println(s"BinaryTreeSet received $reply from $sender")
+      println(s"BinaryTreeSet sending that reply to ${context.parent}")
+      context.parent ! reply
+
+    case _ => ???
+  }
 
   // optional
   /** Handles messages while garbage collection is performed.
