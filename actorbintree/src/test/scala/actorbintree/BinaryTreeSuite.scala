@@ -5,7 +5,6 @@ package actorbintree
 
 import akka.actor.{ActorRef, ActorSystem, Props, actorRef2Scala}
 import akka.testkit.{ImplicitSender, TestKitBase, TestProbe}
-import munit.TestOptions
 
 import scala.concurrent.duration._
 import scala.util.Random
