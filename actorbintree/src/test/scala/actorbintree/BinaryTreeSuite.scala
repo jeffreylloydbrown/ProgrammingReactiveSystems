@@ -188,8 +188,7 @@ class BinaryTreeSuite extends munit.FunSuite with TestKitBase with ImplicitSende
     expectMsg(ContainsResult(7, result = true))
   }
 
-  test(TestOptions("proper inserts and lookups (5pts)").ignore) {
-//  test("proper inserts and lookups (5pts)") {
+  test("proper inserts and lookups (5pts)") {
     val topNode = system.actorOf(Props[BinaryTreeSet]())
 
     topNode ! Contains(testActor, id = 1, 1)
@@ -202,9 +201,7 @@ class BinaryTreeSuite extends munit.FunSuite with TestKitBase with ImplicitSende
     expectMsg(ContainsResult(3, result = true))
   }
 
-
-  test(TestOptions("instruction example (5pts)").ignore) {
-//  test("instruction example (5pts)") {
+  test("instruction example (5pts)") {
     val requester = TestProbe()
     val requesterRef = requester.ref
     val ops = List(
@@ -228,8 +225,7 @@ class BinaryTreeSuite extends munit.FunSuite with TestKitBase with ImplicitSende
     verify(requester, ops, expectedReplies)
   }
 
-  test(TestOptions("behave identically to built-in set (includes GC) (40pts)").ignore) {
-//  test("behave identically to built-in set (includes GC) (40pts)") {
+  test("behave identically to built-in set (includes GC) (40pts)") {
     val rnd = new Random()
     def randomOperations(requester: ActorRef, count: Int): Seq[Operation] = {
       def randomElement: Int = rnd.nextInt(100)
