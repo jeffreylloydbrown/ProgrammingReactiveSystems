@@ -171,7 +171,7 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor wit
         log.debug("Remove from {} subtree: send {} to {}", p, r, subtree)
         subtree ! r
       case None =>
-        log.debug("no {} subtree, element not found so just return")
+        log.debug("no {} subtree, element not found so just return", p)
         tellOperationFinished(Remove.Name, requester, id)
     }
   }
@@ -212,12 +212,9 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor wit
         id, newElem, subtrees, removed)
       insertSubTree(requester, subtrees, removed, direction, id, newElem)
 
-    case Remove(requester, id, target) if target == elem && removed =>
-      log.debug("Remove id{} elem {}, subtrees = {}, removed = {}, already removed so just return",
-        id, target, subtrees, removed)
-      tellOperationFinished(Remove.Name, requester, id)
-    case Remove(requester, id, target) if target == elem && ! removed =>
-      log.debug("Remove id{} elem {}, subtrees = {}, removed = {}, change behavior to removed = true",
+    case Remove(requester, id, target) if target == elem =>
+      val msg = if (removed) "already removed so no logical change" else "change behavior to removed = true"
+      log.debug("Remove id{} elem {}, subtrees = {}, removed = {}, " + msg,
         id, target, subtrees, removed)
       context.become(normal(subtrees, removed = true))
       tellOperationFinished(Remove.Name, requester, id)
