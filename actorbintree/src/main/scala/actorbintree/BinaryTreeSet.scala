@@ -1,6 +1,6 @@
 /**
- * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
- */
+  * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+  */
 package actorbintree
 
 import akka.actor._
@@ -34,9 +34,6 @@ object BinaryTreeSet {
     * this operation is completed.
     */
   case class Contains(requester: ActorRef, id: Int, elem: Int) extends Operation
-  object Contains {
-    val Name = "Contains"
-  }
 
   /** Request with identifier `id` to remove the element `elem` from the tree.
     * The actor at reference `requester` should be notified when this operation
@@ -113,10 +110,10 @@ object BinaryTreeNode {
 
   case class CopyTo(treeNode: ActorRef)
   /**
-   * Acknowledges that a copy has been completed. This message should be sent
-   * from a node to its parent, when this node and all its children nodes have
-   * finished being copied.
-   */
+    * Acknowledges that a copy has been completed. This message should be sent
+    * from a node to its parent, when this node and all its children nodes have
+    * finished being copied.
+    */
   case object CopyFinished
 
 }
@@ -141,38 +138,22 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor wit
         requester ! c
     }
 
-  private def insertSubTree(requester: ActorRef,
-                            subtrees: Map[Position, ActorRef],
-                            removed: Boolean,
-                            p: Position, id: Int, newElem: Int): Unit = {
+  private def goToNode(opName: String,
+                       requester: ActorRef,
+                       subtrees: Map[Position, ActorRef],
+                       p: Position,
+                       id: Int)
+                      (ifFound: => Operation)
+                      (ifNotFound: => (Map[Position, ActorRef], Boolean)): Unit = {
     subtrees.get(p) match {
       case Some(subtree) =>
-        val i = Insert(requester, id, newElem)
-        log.debug("Insert into {} subtree: send {} to {}", p,i, subtree)
-        subtree ! i
+        log.debug("{}: {} subtree: send {} to {}", opName, p, ifFound, subtree)
+        subtree ! ifFound
       case None =>
-        val newNode = context.actorOf(Props(classOf[BinaryTreeNode], newElem, false),
-          s"elem-$newElem")
-        log.debug("no {} subtree, add new actor {}", p,newNode)
-        val newSubTrees = subtrees + (p -> newNode)
-        setNormalBehavior(Insert.Name, newSubTrees, removed)
-        tellOperationFinished(Insert.Name, requester, id)
-    }
-  }
-
-  private def removeSubTree(requester: ActorRef,
-                            subtrees: Map[Position, ActorRef],
-                            removed: Boolean,
-                            p: Position, id: Int, target: Int): Unit = {
-    subtrees.get(p) match {
-      case Some(subtree) =>
-        val r = Remove(requester, id, target)
-        log.debug("Remove from {} subtree: send {} to {}", p, r, subtree)
-        subtree ! r
-      case None =>
-        log.debug("no {} subtree, element not found so just return", p)
-        setNormalBehavior(Remove.Name, subtrees, removed)
-        tellOperationFinished(Remove.Name, requester, id)
+        val (newSubtrees, newRemoved) = ifNotFound
+        log.debug("{}: no {} subtree, walk stopped at elem {}", opName, p, elem)
+        setNormalBehavior(opName, newSubtrees, newRemoved)
+        tellOperationFinished(opName, requester, id)
     }
   }
 
@@ -208,9 +189,17 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor wit
       tellOperationFinished(Insert.Name, requester, id)
     case Insert(requester, id, newElem) =>
       val direction = if (newElem < elem) Left else Right
+      def ifFound = Insert(requester, id, newElem)
+      def ifNotFound = {
+        val newNode = context.actorOf(Props(classOf[BinaryTreeNode], newElem, false),
+          s"elem-$newElem")
+        log.debug("no {} subtree, add new actor {}", direction,newNode)
+        val newSubTrees = subtrees + (direction -> newNode)
+        (newSubTrees, removed)
+      }
       log.debug("Insert id{} elem {}, subtrees = {}, removed = {}, go " + direction,
         id, newElem, subtrees, removed)
-      insertSubTree(requester, subtrees, removed, direction, id, newElem)
+      goToNode(Insert.Name, requester, subtrees, direction, id)(ifFound)(ifNotFound)
 
     case Remove(requester, id, target) if target == elem =>
       val msg = if (removed) "already removed so no logical change" else "change behavior to removed = true"
@@ -220,9 +209,14 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor wit
       tellOperationFinished(Remove.Name, requester, id)
     case Remove(requester, id, target) =>
       val direction = if (target < elem) Left else Right
+      def ifFound = Remove(requester, id, target)
+      def ifNotFound = {
+        log.debug("no {} subtree, element not found so just return", direction)
+        (subtrees, removed)
+      }
       log.debug("Remove id{} elem {}, subtrees = {}, removed = {}, go " + direction,
         id, target, subtrees, removed)
-      removeSubTree(requester, subtrees, removed, direction, id, target)
+      goToNode(Remove.Name, requester, subtrees, direction, id)(ifFound)(ifNotFound)
 
     case _ => ???
   }
