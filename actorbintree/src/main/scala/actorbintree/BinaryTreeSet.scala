@@ -177,14 +177,11 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor wit
       log.debug("Contains found {}, removed = {}, sending {} to {}",
         elem, removed, c, requester)
       requester ! c
-    case Contains(requester, id, searchingForElem) if searchingForElem < elem =>
-      log.debug("Contains id{} searchingFor < elem, subtrees = {}, removed = {}, search left",
-        id, subtrees, removed)
-      searchSubTree(requester, subtrees, Left, id, searchingForElem)
     case Contains(requester, id, searchingForElem) =>
-      log.debug("Contains id{} searchingFor > elem, subtrees = {}, removed = {}, search right",
+      val direction = if (searchingForElem < elem) Left else Right
+      log.debug("Contains id{}, subtrees = {}, removed = {}, search " + direction,
         id, subtrees, removed)
-      searchSubTree(requester, subtrees, Right, id, searchingForElem)
+      searchSubTree(requester, subtrees, direction, id, searchingForElem)
 
     case Insert(requester, id, newElem) if newElem == elem && ! removed =>
       log.debug("Insert id{}, subtrees = {}, removed = {}", id, subtrees, removed)
@@ -199,14 +196,11 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor wit
       log.debug("context set to normal({}, false)", subtrees)
       requester ! OperationFinished(id)
       log.debug("Insert sent OperationFinished({}) to {}", id, requester)
-    case Insert(requester, id, newElem) if newElem < elem =>
-      log.debug("Insert id{} elem {}, subtrees = {}, removed = {}, go left",
-        id, newElem, subtrees, removed)
-      insertSubTree(requester, subtrees, removed, Left, id, newElem)
     case Insert(requester, id, newElem) =>
-      log.debug("Insert id{} elem {}, subtrees = {}, removed = {}, go right",
+      val direction = if (newElem < elem) Left else Right
+      log.debug("Insert id{} elem {}, subtrees = {}, removed = {}, go " + direction,
         id, newElem, subtrees, removed)
-      insertSubTree(requester, subtrees, removed, Right, id, newElem)
+      insertSubTree(requester, subtrees, removed, direction, id, newElem)
 
     case Remove(requester, id, target) if target == elem && removed =>
       log.debug("Remove id{} elem {}, subtrees = {}, removed = {}, already removed so just return",
