@@ -44,14 +44,14 @@ class BinaryTreeSuite extends munit.FunSuite with TestKitBase with ImplicitSende
     // the grader also verifies that enough actors are created
   }
 
-  test("new tree reads as empty (even though it has a deleted node)") {
+  test("new BinaryTreeSet reads as empty (even though it has a deleted node)") {
     val topNode = system.actorOf(Props[BinaryTreeSet]())
 
     topNode ! Contains(testActor, id = 1, 0)
     expectMsg(ContainsResult(1, result = false))
   }
 
-  test("inserting the 'removed' element of a new tree makes it found") {
+  test("inserting the 'removed' element of a new BinaryTreeSet makes it found") {
     val topNode = system.actorOf(Props[BinaryTreeSet]())
 
     topNode ! Insert(testActor, id = 1, 0)
@@ -116,6 +116,78 @@ class BinaryTreeSuite extends munit.FunSuite with TestKitBase with ImplicitSende
     expectMsg(ContainsResult(27, result = false))
   }
 
+  test("removing the root node from an empty BinaryTreeSet completes ok") {
+    val topNode = system.actorOf(Props[BinaryTreeSet]())
+    topNode ! Remove(testActor, 1, defaultRootElement)
+    expectMsg(OperationFinished(1))
+  }
+
+  test("removing an element not in a non-empty BinaryTreeSet is ok") {
+    val topNode = system.actorOf(Props[BinaryTreeSet]())
+    val target = 17
+    val otherElem = target + 2
+    topNode ! Insert(testActor, 1, otherElem)
+    expectMsg(OperationFinished(1))
+    topNode ! Contains(testActor, 2, otherElem)
+    expectMsg(ContainsResult(2, result = true))
+    topNode ! Contains(testActor, 3, target)
+    expectMsg(ContainsResult(3, result = false))  // just confirming not present before removing it.
+    topNode ! Remove(testActor, 4, target)
+    expectMsg(OperationFinished(4))
+    topNode ! Contains(testActor, 5, otherElem)
+    expectMsg(ContainsResult(5, result = true))
+    topNode ! Contains(testActor, 6, target)
+    expectMsg(ContainsResult(6, result = false))
+  }
+
+  test("add a node to an empty BinaryTreeSet, remove it, node not found") {
+    val topNode = system.actorOf(Props[BinaryTreeSet]())
+    val elem = 91
+    topNode ! Insert(testActor, 1, elem)
+    expectMsg(OperationFinished(1))
+    topNode ! Remove(testActor, 2, elem)
+    expectMsg(OperationFinished(2))
+    topNode ! Contains(testActor, 3, elem)
+    expectMsg(ContainsResult(3, result = false))
+  }
+
+  test("add a leaf node to a non-empty BinaryTreeSet, remove it, node not found") {
+    val topNode = system.actorOf(Props[BinaryTreeSet]())
+    val elem = 49
+    topNode ! Insert(testActor, 1, 1) // to make tree not empty
+    expectMsg(OperationFinished(1))
+    topNode ! Insert( testActor, 2, elem)
+    expectMsg(OperationFinished(2))
+    topNode ! Contains(testActor, 3, elem)
+    expectMsg(ContainsResult(3, result = true))
+    topNode ! Remove(testActor, 4, elem)
+    expectMsg(OperationFinished(4))
+    topNode ! Contains(testActor, 5, elem)
+    expectMsg(ContainsResult(5, result = false))
+  }
+
+  test("add an interior node to a non-empty BinaryTreeSet, remove it, node not found but other node still found") {
+    val topNode = system.actorOf(Props[BinaryTreeSet]())
+    val makeItNotEmptyElem = 29
+    val removeTargetElem = 23
+
+    topNode ! Insert(testActor, 1, makeItNotEmptyElem)
+    expectMsg(OperationFinished(1))
+    topNode ! Insert(testActor, 2, removeTargetElem)
+    expectMsg(OperationFinished(2))
+    topNode ! Contains(testActor, 3, makeItNotEmptyElem)
+    expectMsg(ContainsResult(3, result = true))
+    topNode ! Contains(testActor, 4, removeTargetElem)
+    expectMsg(ContainsResult(4, result = true))
+    // now remove the target element, then confirm it isn't found while the other element is still found.
+    topNode ! Remove(testActor, 5, removeTargetElem)
+    expectMsg(OperationFinished(5))
+    topNode ! Contains(testActor, 6, removeTargetElem)
+    expectMsg(ContainsResult(6, result = false))
+    topNode ! Contains(testActor, 7, makeItNotEmptyElem)
+    expectMsg(ContainsResult(7, result = true))
+  }
+
   test(TestOptions("proper inserts and lookups (5pts)").ignore) {
 //  test("proper inserts and lookups (5pts)") {
     val topNode = system.actorOf(Props[BinaryTreeSet]())
@@ -129,6 +201,7 @@ class BinaryTreeSuite extends munit.FunSuite with TestKitBase with ImplicitSende
     topNode ! Contains(testActor, id = 3, 1)
     expectMsg(ContainsResult(3, result = true))
   }
+
 
   test(TestOptions("instruction example (5pts)").ignore) {
 //  test("instruction example (5pts)") {
