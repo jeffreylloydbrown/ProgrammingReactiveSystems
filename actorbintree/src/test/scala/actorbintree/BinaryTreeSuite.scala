@@ -255,15 +255,17 @@ class BinaryTreeSuite extends munit.FunSuite with TestKitBase with ImplicitSende
     }
 
     val requester = TestProbe()
-    val topNode = system.actorOf(Props[BinaryTreeSet]())
-    val count = 1000
+    val topNode = system.actorOf(Props[BinaryTreeSet](), "topNode")
+//    val count = 1000
+    val count = 300
 
     val ops = randomOperations(requester.ref, count)
     val expectedReplies = referenceReplies(ops)
 
     ops foreach { op =>
       topNode ! op
-      if (rnd.nextDouble() < 0.1) topNode ! GC
+//      if (rnd.nextDouble() < 0.1) topNode ! GC
+      if (rnd.nextDouble() < 1) topNode ! GC  // gonna GC every operation.
     }
     receiveN(requester, ops, expectedReplies)
   }

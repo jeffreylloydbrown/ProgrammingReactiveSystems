@@ -3,9 +3,11 @@
   */
 package actorbintree
 
+import actorbintree.BinaryTreeNode.CopyTo
 import akka.actor._
 import akka.event.LoggingReceive
 
+import scala.annotation.tailrec
 import scala.collection.immutable.Queue
 
 object BinaryTreeSet {
@@ -46,6 +48,9 @@ object BinaryTreeSet {
 
   /** Request to perform garbage collection */
   case object GC
+
+  /** Response indicating BinaryTreeNode has finished garbage collection */
+  case object GCCompleted
 
   /** Holds the answer to the Contains request with identifier `id`.
     * `result` is true if and only if the element is present in the tree.
@@ -91,6 +96,14 @@ class BinaryTreeSet extends Actor with ActorLogging {
     case Remove(requester, id, elem) =>
       log.debug("forwarding Remove({}, {}, {}) to {}", requester, id, elem, root)
       root ! Remove(requester, id, elem)
+
+    case GC =>
+      val newRoot = context.actorOf(Props(classOf[BinaryTreeNode], defaultRootElement, true),
+        s"NewRoot-elem-$defaultRootElement")
+      log.debug("tell {} to CopyTo({})", root, newRoot)
+      root ! CopyTo(newRoot)
+      context.become(garbageCollecting(newRoot))
+      log.debug("changed state to garbageCollecting({})", newRoot)
   }
 
   // optional
@@ -98,7 +111,40 @@ class BinaryTreeSet extends Actor with ActorLogging {
     * `newRoot` is the root of the new binary tree where we want to copy
     * all non-removed elements into.
     */
-  def garbageCollecting(newRoot: ActorRef): Receive = ???
+  def garbageCollecting(newRoot: ActorRef): Receive = LoggingReceive {
+    case op: Operation =>
+      pendingQueue = pendingQueue.enqueue(op)
+      log.debug("GC: received and queued {}, pending queue now {}", op, pendingQueue)
+
+    case GC =>
+      log.debug("GC: received GC request from {}, GC already in progress so ignore it", sender)
+
+    case GCCompleted =>
+      log.debug("GC: GCCompleted received")
+      stopNodes(root)
+      root = newRoot
+      log.debug("GC: set root = {}", newRoot)
+      playQueuedOperations(pendingQueue)
+      pendingQueue = Queue.empty[Operation]
+      log.debug("GC: pending queue reset to {}", pendingQueue)
+      context.become(receive)
+      log.debug("GC: set context back to normal, GC complete")
+  }
+
+  @tailrec
+  private def playQueuedOperations(q: Queue[Operation]): Unit = q.dequeueOption match {
+    case None =>
+      // empty queue, we're done
+      ()
+    case Some((operation, qWithoutOperation)) =>
+      log.debug("GC: sending queued operation {} to {}", operation, root)
+      root ! operation
+      playQueuedOperations(qWithoutOperation)
+  }
+
+  private def stopNodes(node: ActorRef): Unit = {
+    // eventually we will walk the node and stop all its children, then itself.  But not yet.
+  }
 
 }
 
@@ -218,7 +264,10 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor wit
         id, target, subtrees, removed)
       goToNode(Remove.Name, requester, subtrees, direction, id)(ifFound)(ifNotFound)
 
-    case _ => ???
+    case CopyTo(node) =>
+      // for now, do nothing with what we received so we can get BinaryTreeSet implemented with correct queue playing.
+      log.debug("GC: {} got CopyTo from {}", self,sender)
+      sender ! GCCompleted
   }
 
   // optional
