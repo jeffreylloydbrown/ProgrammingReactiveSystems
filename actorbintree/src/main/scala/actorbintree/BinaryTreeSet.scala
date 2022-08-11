@@ -25,18 +25,27 @@ object BinaryTreeSet {
     * is completed.
     */
   case class Insert(requester: ActorRef, id: Int, elem: Int) extends Operation
+  object Insert {
+    val Name = "Insert"
+  }
 
   /** Request with identifier `id` to check whether an element `elem` is present
     * in the tree. The actor at reference `requester` should be notified when
     * this operation is completed.
     */
   case class Contains(requester: ActorRef, id: Int, elem: Int) extends Operation
+  object Contains {
+    val Name = "Contains"
+  }
 
   /** Request with identifier `id` to remove the element `elem` from the tree.
     * The actor at reference `requester` should be notified when this operation
     * is completed.
     */
   case class Remove(requester: ActorRef, id: Int, elem: Int) extends Operation
+  object Remove {
+    val Name = "Remove"
+  }
 
   /** Request to perform garbage collection */
   case object GC
@@ -148,8 +157,7 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor wit
         val newSubTrees = subtrees + (p -> newNode)
         context.become(normal(newSubTrees, removed))
         log.debug("context set to normal({}, {})", newSubTrees, removed)
-        requester ! OperationFinished(id)
-        log.debug("Insert sent OperationFinished({}) to {}", id, requester)
+        tellOperationFinished(Insert.Name, requester, id)
     }
   }
 
@@ -164,9 +172,13 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor wit
         subtree ! r
       case None =>
         log.debug("no {} subtree, element not found so just return")
-        requester ! OperationFinished(id)
-        log.debug("Remove sent OperationFinished({}) to {}", id, requester)
+        tellOperationFinished(Remove.Name, requester, id)
     }
+  }
+
+  private def tellOperationFinished(name: String, requester: ActorRef, id: Int): Unit = {
+    requester ! OperationFinished(id)
+    log.debug("{} sent OperationFinished({}) to {}", name, id, requester)
   }
 
   /** Handles `Operation` messages and `CopyTo` requests. */
@@ -185,17 +197,15 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor wit
 
     case Insert(requester, id, newElem) if newElem == elem && ! removed =>
       log.debug("Insert id{}, subtrees = {}, removed = {}", id, subtrees, removed)
-      log.debug("id{} elem {} found, sent OperationFinished({}) to {}",
+      log.debug("id{} elem {} found, no need to do anything",
         id, newElem, id, requester)
-      requester ! OperationFinished(id)
-      log.debug("Insert sent OperationFinished({}) to {}", id, requester)
+      tellOperationFinished(Insert.Name, requester, id)
     case Insert(requester, id, newElem) if newElem == elem =>
       log.debug("Insert id{}, subtrees = {}, removed = {}", id, subtrees, removed)
       log.debug("id{} elem {} found but was removed, undeleting it", id, newElem)
       context.become(normal(subtrees, removed = false))
       log.debug("context set to normal({}, false)", subtrees)
-      requester ! OperationFinished(id)
-      log.debug("Insert sent OperationFinished({}) to {}", id, requester)
+      tellOperationFinished(Insert.Name, requester, id)
     case Insert(requester, id, newElem) =>
       val direction = if (newElem < elem) Left else Right
       log.debug("Insert id{} elem {}, subtrees = {}, removed = {}, go " + direction,
@@ -205,14 +215,12 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor wit
     case Remove(requester, id, target) if target == elem && removed =>
       log.debug("Remove id{} elem {}, subtrees = {}, removed = {}, already removed so just return",
         id, target, subtrees, removed)
-      requester ! OperationFinished(id)
-      log.debug("Remove sent OperationFinished({}) to {}", id, requester)
+      tellOperationFinished(Remove.Name, requester, id)
     case Remove(requester, id, target) if target == elem && ! removed =>
       log.debug("Remove id{} elem {}, subtrees = {}, removed = {}, change behavior to removed = true",
         id, target, subtrees, removed)
       context.become(normal(subtrees, removed = true))
-      requester ! OperationFinished(id)
-      log.debug("Remove sent OperationFinished({}) to {}", id, requester)
+      tellOperationFinished(Remove.Name, requester, id)
     case Remove(requester, id, target) =>
       val direction = if (target < elem) Left else Right
       log.debug("Remove id{} elem {}, subtrees = {}, removed = {}, go " + direction,
