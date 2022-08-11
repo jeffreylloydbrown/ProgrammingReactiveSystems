@@ -212,7 +212,7 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor wit
       def ifFound = Remove(requester, id, target)
       def ifNotFound = {
         log.debug("no {} subtree, element not found so just return", direction)
-        (subtrees, removed)
+        (subtrees, removed)  // removing when not found means not changing our state, return current state
       }
       log.debug("Remove id{} elem {}, subtrees = {}, removed = {}, go " + direction,
         id, target, subtrees, removed)
