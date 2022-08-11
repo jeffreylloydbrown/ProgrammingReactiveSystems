@@ -194,15 +194,11 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor wit
       log.debug("Contains id{}, subtrees = {}, removed = {}, search " + direction,
         id, subtrees, removed)
       searchSubTree(requester, subtrees, direction, id, searchingForElem)
-
-    case Insert(requester, id, newElem) if newElem == elem && ! removed =>
-      log.debug("Insert id{}, subtrees = {}, removed = {}", id, subtrees, removed)
-      log.debug("id{} elem {} found, no need to do anything",
-        id, newElem, id, requester)
-      tellOperationFinished(Insert.Name, requester, id)
+      
     case Insert(requester, id, newElem) if newElem == elem =>
+      val msg = if (removed) "but was removed, undeleting it" else "and not removed, no logical change"
       log.debug("Insert id{}, subtrees = {}, removed = {}", id, subtrees, removed)
-      log.debug("id{} elem {} found but was removed, undeleting it", id, newElem)
+      log.debug("id{} elem {} found " + msg, id, newElem)
       context.become(normal(subtrees, removed = false))
       log.debug("context set to normal({}, false)", subtrees)
       tellOperationFinished(Insert.Name, requester, id)
