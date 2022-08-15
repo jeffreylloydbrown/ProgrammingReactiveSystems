@@ -64,18 +64,17 @@ object BinaryTreeSet {
   /** Message to signal successful completion of an insert or remove operation. */
   case class OperationFinished(id: Int) extends OperationReply
 
-  /** This is the element inserted into a new BinaryTreeSet when the
-    * BinaryTreeSet is created.
-    */
+  /** This is the element inserted into a new BinaryTreeSet when the BinaryTreeSet is created. */
   val defaultRootElement = 0
 
-}
+} // object BinaryTreeSet
 
 
 class BinaryTreeSet extends Actor with ActorLogging {
   import BinaryTreeSet._
 
-  def createRoot: ActorRef = context.actorOf(Props(classOf[BinaryTreeNode], defaultRootElement, true),
+  def createRoot: ActorRef = context.actorOf(
+    Props(classOf[BinaryTreeNode], defaultRootElement, true),
     s"root-elem-$defaultRootElement")
 
   var root: ActorRef = createRoot
@@ -102,7 +101,8 @@ class BinaryTreeSet extends Actor with ActorLogging {
       root ! Remove(requester, id, elem)
 
     case GC =>
-      val newRoot = context.actorOf(Props(classOf[BinaryTreeNode], defaultRootElement, true),
+      val newRoot = context.actorOf(
+        Props(classOf[BinaryTreeNode], defaultRootElement, true),
         s"NewRoot-elem-$defaultRootElement")
       log.debug("tell {} to CopyTo({})", root, newRoot)
       root ! CopyTo(newRoot)
@@ -118,10 +118,12 @@ class BinaryTreeSet extends Actor with ActorLogging {
   def garbageCollecting(newRoot: ActorRef): Receive = LoggingReceive {
     case op: Operation =>
       pendingQueue = pendingQueue.enqueue(op)
-      log.debug("GC BinaryTreeSet: received and queued {}, pending queue now {}", op, pendingQueue)
+      log.debug("GC BinaryTreeSet: received and queued {}, pending queue now {}",
+        op, pendingQueue)
 
     case GC =>
-      log.debug("GC BinaryTreeSet: received GC request from {}, GC already in progress so ignore it", sender)
+      log.debug("GC BinaryTreeSet: received GC request from {}, GC already in progress " +
+        "so ignore it", sender)
 
     case GCCompleted =>
       log.debug("GC BinaryTreeSet: GCCompleted received")
@@ -145,10 +147,10 @@ class BinaryTreeSet extends Actor with ActorLogging {
       playQueuedOperations(qWithoutOperation)
   }
 
-}
+} // class BinaryTreeSet
 
 object BinaryTreeNode {
-  trait Position
+  sealed trait Position
 
   case object Left extends Position
   case object Right extends Position
@@ -161,7 +163,7 @@ object BinaryTreeNode {
     */
   case object CopyFinished
 
-}
+} // object BinaryTreeNode
 
 class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor with ActorLogging {
   import BinaryTreeNode._
@@ -268,19 +270,63 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor wit
       // What's unique?  My element value!  So use that as my message ID for garbage collecting.
       if (! removed) {
         val id = elem
-        log.debug("GC BinaryTreeNode: {} not removed, inserting elem {} id {} into {}",
+        log.debug("GC BinaryTreeNode: {} valid to copy, inserting elem {} id {} into {}",
           self, elem, id, node)
         node ! Insert(self, id, elem)
+        log.debug("GC BinaryTreeNode: {} change state to awaitInsertCompleted({})", self, node)
+        context.become(awaitInsertCompleted(node, subtrees))
       } else {
         log.debug("GC BinaryTreeNode: {} removed, DID NOT insert into new BinaryTreeSet", self)
-      }
-      // Tell my children to CopyTo(node).  But if I have no children, I'm actually Done copying.
-      val children = subtrees.values.toList
-      if (children.isEmpty) sendGCCompleted() else {
-        log.debug("GC BinaryTreeNode: {} has children {}, tell them to CopyTo({})",
-          self, children, node)
+        tellChildrenCopyTo(subtrees.values.toList, node)
       }
 
+  }
+
+  // Looking for an OperationFinished message with my `elem` as its message id.  Assuming I get it,
+  // then tell my children to copy themselves.  That routine will take care of finishing the CopyTo operation.
+  private def awaitInsertCompleted(node: ActorRef, subtrees: Map[Position, ActorRef]): Receive = LoggingReceive {
+    case CopyTo(anotherNode) =>
+      log.debug("GC BinaryTreeNode awaitInsertCompleted: {} received CopyTo({}) from {} " +
+        "while already in GC, ignoring it", self, anotherNode, sender)
+    case OperationFinished(id: Int) if id == elem =>
+        log.debug("GC BinaryTreeNode awaitInsertCompleted: got expected Insert completed notification " +
+          "id {} from {}", id, sender)
+        tellChildrenCopyTo(subtrees.values.toList, node)
+    case OperationFinished(id: Int) if id != elem =>
+      log.debug("GC BinaryTreeNode awaitInsertCompleted: got UNEXPECTED Insert completed notification " +
+        "id {} from {}, ignoring it", id, sender)
+
+  }
+
+  // Tell my children to CopyTo(node).  But if I have no children, I'm actually Done copying.
+  private def tellChildrenCopyTo(children: List[ActorRef], node: ActorRef): Unit = {
+    if (children.isEmpty) sendGCCompleted() else {
+      log.debug("GC BinaryTreeNode: {} has children {}, tell them to CopyTo({})",
+        self, children, node)
+      children.foreach(_ ! CopyTo(node))
+      log.debug("GC BinaryTreeNode: {} state becomes awaitGCCompleted({})", self, children)
+      context.become(awaitGCCompleted(children))
+    }
+  }
+
+  // Because each BinaryTreeNode stops itself once it is finished doing CopyTo(), this current instance cannot
+  // return to its `normal` state.  That `normal` state now exists in the new BinaryTreeSet.  This means we do
+  // not need to remember our old children (because they are stopping themselves when they are done CopyTo) or
+  // whether or not we are removed.
+  private def awaitGCCompleted(waitingForChildren: List[ActorRef]): Receive = LoggingReceive {
+    case CopyTo(anotherNode) =>
+      log.debug("GC BinaryTreeNode awaitGCCompleted: {} received CopyTo({}) from {} while already in GC, " +
+        "ignoring it", self, anotherNode, sender)
+    case GCCompleted =>
+      val nowWaitingFor = waitingForChildren.filter(_ != sender)
+      if (nowWaitingFor.isEmpty) {
+        log.debug("GC BinaryTreeNode awaitGCCompleted: {} children finished", self)
+        sendGCCompleted()
+      } else {
+        log.debug("GC BinaryTreeNode awaitGCCompleted: {} still waiting for {}",
+          self, nowWaitingFor)
+        context.become(awaitGCCompleted(nowWaitingFor))
+      }
   }
 
   private def sendGCCompleted(): Unit = {
@@ -290,12 +336,4 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor wit
     context.stop(self)
   }
 
-
-  // optional
-  /** `expected` is the set of ActorRefs whose replies we are waiting for,
-    * `insertConfirmed` tracks whether the copy of this node to the new tree has been confirmed.
-    */
-  def copying(expected: Set[ActorRef], insertConfirmed: Boolean): Receive = ???
-
-
-}
+} // class BinaryTreeNode

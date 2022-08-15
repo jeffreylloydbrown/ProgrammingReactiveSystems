@@ -11,10 +11,14 @@ import akka.testkit.{ImplicitSender, TestKitBase, TestProbe}
 import scala.concurrent.duration._
 import scala.util.Random
 
-class BinaryTreeSuite extends munit.FunSuite with TestKitBase with ImplicitSender {
+class BinaryTreeSuite extends munit.FunSuite with TestKitBase with ImplicitSender{
   implicit lazy val system: ActorSystem = ActorSystem("BinaryTreeSuite")
 
   import actorbintree.BinaryTreeSet._
+
+  override def afterEach(context: AfterEach): Unit = {
+    assertEquals(system.mailboxes.deadLetterMailbox.hasMessages, expected = false)
+  }
 
   def receiveN(requester: TestProbe, ops: Seq[Operation], expectedReplies: Seq[OperationReply]): Unit =
     requester.within(5.seconds) {
@@ -243,7 +247,24 @@ class BinaryTreeSuite extends munit.FunSuite with TestKitBase with ImplicitSende
     expectMsg(ContainsResult(2, result = true))
   }
 
-  test("behave identically to built-in set (includes GC) (40pts)") {
+  test("GC of a balanced 1-level BinaryTreeSet doesn't die") {
+    val topNode = system.actorOf(Props[BinaryTreeSet]())
+    val left = -31
+    val right = 73
+    topNode ! Insert(testActor, 1, left)
+    expectMsg(OperationFinished(1))
+    topNode ! Insert(testActor, 2, right)
+    expectMsg(OperationFinished(2))
+
+    topNode ! GC
+
+    topNode ! Contains(testActor, 3, left)
+    expectMsg(ContainsResult(3, result = true))
+    topNode ! Contains(testActor, 4, right)
+    expectMsg(ContainsResult(4, result = true))
+  }
+
+  test("behave identically to built-in set (includes GC) (40pts)".ignore) {
     val rnd = new Random()
     def randomOperations(requester: ActorRef, count: Int): Seq[Operation] = {
       def randomElement: Int = rnd.nextInt(100)
