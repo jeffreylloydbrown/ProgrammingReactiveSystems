@@ -264,6 +264,35 @@ class BinaryTreeSuite extends munit.FunSuite with TestKitBase with ImplicitSende
     expectMsg(ContainsResult(4, result = true))
   }
 
+  test("GC with internal removed nodes doesn't die") {
+    val topNode = system.actorOf(Props[BinaryTreeSet]())
+    val idGenerator = LazyList.from(1)
+    (1 to 4).foreach { elem =>
+      val id = idGenerator.head
+      topNode ! Insert(testActor, id, elem)
+      expectMsg(OperationFinished(id))
+      topNode ! Contains(testActor, -id, elem)
+      expectMsg(ContainsResult(-id, result = true))
+    }
+    (2 to 3).foreach { elem =>
+      val id = idGenerator.head
+      topNode ! Remove(testActor, id, elem)
+      expectMsg(OperationFinished(id))
+    }
+    // tree is now 0 removed, 1 active, 2 removed, 3 removed, 4 active
+    topNode ! GC
+    List(1, 4).foreach { elem =>
+      val id = idGenerator.head
+      topNode ! Contains(testActor, id, elem)
+      expectMsg(ContainsResult(id, result = true))
+    }
+    List(0, 2, 3).foreach { elem =>
+      val id = idGenerator.head
+      topNode ! Contains(testActor, id, elem)
+      expectMsg(ContainsResult(id, result = false))
+    }
+  }
+
   test("behave identically to built-in set (includes GC) (40pts)") {
     val rnd = new Random()
     def randomOperations(requester: ActorRef, count: Int): Seq[Operation] = {
