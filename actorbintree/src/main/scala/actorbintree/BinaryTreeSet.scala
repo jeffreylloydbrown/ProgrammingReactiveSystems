@@ -1,6 +1,10 @@
 /**
   * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+  *
+  *   @note To see debug messages, add -Dakka.loglevel=DEBUG -Dakka.actor.debug.receive=on to VM Options.
+  *         For some tests, you may need to direct the console logs to a file to see all the messages.
   */
+
 package actorbintree
 
 import actorbintree.BinaryTreeNode.CopyTo
@@ -114,21 +118,20 @@ class BinaryTreeSet extends Actor with ActorLogging {
   def garbageCollecting(newRoot: ActorRef): Receive = LoggingReceive {
     case op: Operation =>
       pendingQueue = pendingQueue.enqueue(op)
-      log.debug("GC: received and queued {}, pending queue now {}", op, pendingQueue)
+      log.debug("GC BinaryTreeSet: received and queued {}, pending queue now {}", op, pendingQueue)
 
     case GC =>
-      log.debug("GC: received GC request from {}, GC already in progress so ignore it", sender)
+      log.debug("GC BinaryTreeSet: received GC request from {}, GC already in progress so ignore it", sender)
 
     case GCCompleted =>
-      log.debug("GC: GCCompleted received")
-      stopNodes(root)
+      log.debug("GC BinaryTreeSet: GCCompleted received")
       root = newRoot
-      log.debug("GC: set root = {}", newRoot)
+      log.debug("GC BinaryTreeSet: set root = {}", newRoot)
       playQueuedOperations(pendingQueue)
       pendingQueue = Queue.empty[Operation]
-      log.debug("GC: pending queue reset to {}", pendingQueue)
+      log.debug("GC BinaryTreeSet: pending queue reset to {}", pendingQueue)
       context.become(receive)
-      log.debug("GC: set context back to normal, GC complete")
+      log.debug("GC BinaryTreeSet: set context back to normal, GC complete")
   }
 
   @tailrec
@@ -137,13 +140,9 @@ class BinaryTreeSet extends Actor with ActorLogging {
       // empty queue, we're done
       ()
     case Some((operation, qWithoutOperation)) =>
-      log.debug("GC: sending queued operation {} to {}", operation, root)
+      log.debug("GC BinaryTreeSet: sending queued operation {} to {}", operation, root)
       root ! operation
       playQueuedOperations(qWithoutOperation)
-  }
-
-  private def stopNodes(node: ActorRef): Unit = {
-    // eventually we will walk the node and stop all its children, then itself.  But not yet.
   }
 
 }
@@ -265,10 +264,32 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor wit
       goToNode(Remove.Name, requester, subtrees, direction, id)(ifFound)(ifNotFound)
 
     case CopyTo(node) =>
-      // for now, do nothing with what we received so we can get BinaryTreeSet implemented with correct queue playing.
-      log.debug("GC: {} got CopyTo from {}", self,sender)
-      sender ! GCCompleted
+      // Insert myself into the new BinaryTreeSet `node` if I'm not removed.  I need an ID.  Would be nice to be unique.
+      // What's unique?  My element value!  So use that as my message ID for garbage collecting.
+      if (! removed) {
+        val id = elem
+        log.debug("GC BinaryTreeNode: {} not removed, inserting elem {} id {} into {}",
+          self, elem, id, node)
+        node ! Insert(self, id, elem)
+      } else {
+        log.debug("GC BinaryTreeNode: {} removed, DID NOT insert into new BinaryTreeSet", self)
+      }
+      // Tell my children to CopyTo(node).  But if I have no children, I'm actually Done copying.
+      val children = subtrees.values.toList
+      if (children.isEmpty) sendGCCompleted() else {
+        log.debug("GC BinaryTreeNode: {} has children {}, tell them to CopyTo({})",
+          self, children, node)
+      }
+
   }
+
+  private def sendGCCompleted(): Unit = {
+    log.debug("GC BinaryTreeNode: finished in {}, send GCCompleted to {}", self, context.parent)
+    context.parent ! GCCompleted
+    log.debug("GC BinaryTreeNode: purposely stopping {}", self)
+    context.stop(self)
+  }
+
 
   // optional
   /** `expected` is the set of ActorRefs whose replies we are waiting for,

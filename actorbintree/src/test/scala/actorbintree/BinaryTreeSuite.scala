@@ -1,6 +1,8 @@
 /**
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
- */
+  * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+  *   @note To see debug messages, add -Dakka.loglevel=DEBUG -Dakka.actor.debug.receive=on to VM Options.
+  *         For some tests, you may need to direct the console logs to a file to see all the messages.
+  */
 package actorbintree
 
 import akka.actor.{ActorRef, ActorSystem, Props, actorRef2Scala}
@@ -224,6 +226,23 @@ class BinaryTreeSuite extends munit.FunSuite with TestKitBase with ImplicitSende
     verify(requester, ops, expectedReplies)
   }
 
+  test("GC of an empty tree doesn't die") {
+    val topNode = system.actorOf(Props[BinaryTreeSet]())
+    topNode ! GC
+    topNode ! Contains(testActor, 1, defaultRootElement)
+    expectMsg(ContainsResult(1, result = false))
+  }
+
+  test("GC of a single-node BinaryTreeSet doesn't die") {
+    val topNode = system.actorOf(Props[BinaryTreeSet]())
+    val expected = 19
+    topNode ! Insert(testActor, 1, expected)
+    expectMsg(OperationFinished(1))
+    topNode ! GC
+    topNode ! Contains(testActor, 2, expected)
+    expectMsg(ContainsResult(2, result = true))
+  }
+
   test("behave identically to built-in set (includes GC) (40pts)") {
     val rnd = new Random()
     def randomOperations(requester: ActorRef, count: Int): Seq[Operation] = {
@@ -256,7 +275,7 @@ class BinaryTreeSuite extends munit.FunSuite with TestKitBase with ImplicitSende
 
     val requester = TestProbe()
     val topNode = system.actorOf(Props[BinaryTreeSet](), "topNode")
-//    val count = 1000
+    //    val count = 1000
     val count = 300
 
     val ops = randomOperations(requester.ref, count)
@@ -264,9 +283,10 @@ class BinaryTreeSuite extends munit.FunSuite with TestKitBase with ImplicitSende
 
     ops foreach { op =>
       topNode ! op
-//      if (rnd.nextDouble() < 0.1) topNode ! GC
+      //      if (rnd.nextDouble() < 0.1) topNode ! GC
       if (rnd.nextDouble() < 1) topNode ! GC  // gonna GC every operation.
     }
     receiveN(requester, ops, expectedReplies)
   }
+
 }
