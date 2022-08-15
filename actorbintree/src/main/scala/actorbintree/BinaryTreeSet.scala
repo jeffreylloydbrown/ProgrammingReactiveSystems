@@ -53,9 +53,6 @@ object BinaryTreeSet {
   /** Request to perform garbage collection */
   case object GC
 
-  /** Response indicating BinaryTreeNode has finished garbage collection */
-  case object GCCompleted
-
   /** Holds the answer to the Contains request with identifier `id`.
     * `result` is true if and only if the element is present in the tree.
     */
@@ -125,7 +122,7 @@ class BinaryTreeSet extends Actor with ActorLogging {
       log.debug("GC BinaryTreeSet: received GC request from {}, GC already in progress " +
         "so ignore it", sender)
 
-    case GCCompleted =>
+    case BinaryTreeNode.CopyFinished =>
       log.debug("GC BinaryTreeSet: GCCompleted received")
       root = newRoot
       log.debug("GC BinaryTreeSet: set root = {}", newRoot)
@@ -317,7 +314,7 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor wit
     case CopyTo(anotherNode) =>
       log.debug("GC BinaryTreeNode awaitGCCompleted: {} received CopyTo({}) from {} while already in GC, " +
         "ignoring it", self, anotherNode, sender)
-    case GCCompleted =>
+    case CopyFinished =>
       val nowWaitingFor = waitingForChildren.filter(_ != sender)
       if (nowWaitingFor.isEmpty) {
         log.debug("GC BinaryTreeNode awaitGCCompleted: {} children finished", self)
@@ -331,7 +328,7 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor wit
 
   private def sendGCCompleted(): Unit = {
     log.debug("GC BinaryTreeNode: finished in {}, send GCCompleted to {}", self, context.parent)
-    context.parent ! GCCompleted
+    context.parent ! CopyFinished
     log.debug("GC BinaryTreeNode: purposely stopping {}", self)
     context.stop(self)
   }
