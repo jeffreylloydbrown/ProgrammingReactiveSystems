@@ -5,6 +5,33 @@
   *         For some tests, you may need to direct the console logs to a file to see all the messages.
   */
 
+/*
+I've tried 2 new things with this assignment.  First, I learned that my old habit of using debug.log(s"...") meant
+the string formatter always got invoked, even if log level debug is turned off.  I used the simple string with
+{} syntax here.  The positive is that the substitutions only happen if logging is active, so in a production
+environment this helps with performance.  Three negatives:
+- I find the syntax harder to read since the variables are not inline with the rest of the message.
+- The substitution syntax only supports 4 arguments.  More than that, you have to fall back to string construction.
+- Worse, it is EASY to forget to include an argument or get them misaligned, which makes getting the code right the
+first time harder.
+
+Second, I tried a mix of passing state only in the Receive methods and using vars.  BinaryTreeNode has no vars for
+state values.  This has the benefit of keeping state changes local and with the messages (which is really good).
+It has the detriment that you are passing additional parameters around that are only necessary when state has to
+flow between helper methods.
+
+The vars approach has the advantage that you don't have the additional code cluttering up the logic.  But it means
+the code has vars in it, and I've always fought to not have vars.  In any event, DO NOT USE MUTABLE DATA STRUCTURES
+to hold state if you use vars.  It is fine within the actor itself, but if you need to provide that data structure
+to another actor in a message, it is REALLY EASY to accidentally pass the mutable version (which violates the Actor
+design rule by having multiple, uncoordinated actors accessing the same memory at the same time).  If you use a
+MUTABLE data structure in an Actor, you must NEVER include it in a message to another actor.  Instead, you must send
+an immutable copy of it.  Remembering to do that is the trick....
+
+Overall, while I appreciate the easier to read code with vars, I found keeping state as parameters in the Receive
+methods to be easier to get correct the first time.
+ */
+
 package actorbintree
 
 import actorbintree.BinaryTreeNode.CopyTo
@@ -280,7 +307,7 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor wit
   private def awaitInsertCompleted(node: ActorRef, subtrees: Map[Position, ActorRef]): Receive = LoggingReceive {
     case OperationFinished(id: Int) if id == elem =>
         log.debug("GC BinaryTreeNode awaitInsertCompleted: got expected Insert completed notification " +
-          "id {} from {}", id, sender)
+          "id {} from {}", id, sender())
         tellChildrenCopyTo(subtrees.values.toList, node)
   }
 
@@ -301,7 +328,7 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor wit
   // whether or not we are removed.
   private def awaitGCCompleted(waitingForChildren: List[ActorRef]): Receive = LoggingReceive {
     case CopyFinished =>
-      val nowWaitingFor = waitingForChildren.filter(_ != sender)
+      val nowWaitingFor = waitingForChildren.filter(_ != sender())
       if (nowWaitingFor.isEmpty) {
         log.debug("GC BinaryTreeNode awaitGCCompleted: {} children finished", self)
         sendGCCompleted()
