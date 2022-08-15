@@ -118,10 +118,6 @@ class BinaryTreeSet extends Actor with ActorLogging {
       log.debug("GC BinaryTreeSet: received and queued {}, pending queue now {}",
         op, pendingQueue)
 
-    case GC =>
-      log.debug("GC BinaryTreeSet: received GC request from {}, GC already in progress " +
-        "so ignore it", sender)
-
     case BinaryTreeNode.CopyFinished =>
       log.debug("GC BinaryTreeSet: GCCompleted received")
       root = newRoot
@@ -282,17 +278,10 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor wit
   // Looking for an OperationFinished message with my `elem` as its message id.  Assuming I get it,
   // then tell my children to copy themselves.  That routine will take care of finishing the CopyTo operation.
   private def awaitInsertCompleted(node: ActorRef, subtrees: Map[Position, ActorRef]): Receive = LoggingReceive {
-    case CopyTo(anotherNode) =>
-      log.debug("GC BinaryTreeNode awaitInsertCompleted: {} received CopyTo({}) from {} " +
-        "while already in GC, ignoring it", self, anotherNode, sender)
     case OperationFinished(id: Int) if id == elem =>
         log.debug("GC BinaryTreeNode awaitInsertCompleted: got expected Insert completed notification " +
           "id {} from {}", id, sender)
         tellChildrenCopyTo(subtrees.values.toList, node)
-    case OperationFinished(id: Int) if id != elem =>
-      log.debug("GC BinaryTreeNode awaitInsertCompleted: got UNEXPECTED Insert completed notification " +
-        "id {} from {}, ignoring it", id, sender)
-
   }
 
   // Tell my children to CopyTo(node).  But if I have no children, I'm actually Done copying.
@@ -311,9 +300,6 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor wit
   // not need to remember our old children (because they are stopping themselves when they are done CopyTo) or
   // whether or not we are removed.
   private def awaitGCCompleted(waitingForChildren: List[ActorRef]): Receive = LoggingReceive {
-    case CopyTo(anotherNode) =>
-      log.debug("GC BinaryTreeNode awaitGCCompleted: {} received CopyTo({}) from {} while already in GC, " +
-        "ignoring it", self, anotherNode, sender)
     case CopyFinished =>
       val nowWaitingFor = waitingForChildren.filter(_ != sender)
       if (nowWaitingFor.isEmpty) {
