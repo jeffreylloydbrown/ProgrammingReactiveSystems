@@ -1,18 +1,24 @@
 /**
- * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
- */
+  * Copyright (C) 2009-2015 Typesafe Inc. <http://www.typesafe.com>
+  *   @note To see debug messages, add -Dakka.loglevel=DEBUG -Dakka.actor.debug.receive=on to VM Options.
+  *         For some tests, you may need to direct the console logs to a file to see all the messages.
+  */
 package actorbintree
 
 import akka.actor.{ActorRef, ActorSystem, Props, actorRef2Scala}
 import akka.testkit.{ImplicitSender, TestKitBase, TestProbe}
 
-import scala.util.Random
 import scala.concurrent.duration._
+import scala.util.Random
 
-class BinaryTreeSuite extends munit.FunSuite with TestKitBase with ImplicitSender {
+class BinaryTreeSuite extends munit.FunSuite with TestKitBase with ImplicitSender{
   implicit lazy val system: ActorSystem = ActorSystem("BinaryTreeSuite")
 
   import actorbintree.BinaryTreeSet._
+
+  override def afterEach(context: AfterEach): Unit = {
+    assertEquals(system.mailboxes.deadLetterMailbox.hasMessages, expected = false)
+  }
 
   def receiveN(requester: TestProbe, ops: Seq[Operation], expectedReplies: Seq[OperationReply]): Unit =
     requester.within(5.seconds) {
@@ -20,12 +26,15 @@ class BinaryTreeSuite extends munit.FunSuite with TestKitBase with ImplicitSende
         requester.expectMsgType[OperationReply]
       } catch {
         case ex: Throwable if ops.size > 10 => sys.error(s"failure to receive confirmation $i/${ops.size}\n$ex")
-        case ex: Throwable                  => sys.error(s"failure to receive confirmation $i/${ops.size}\nRequests:" + ops.mkString("\n    ", "\n     ", "") + s"\n$ex")
+        case ex: Throwable                  => sys.error(s"failure to receive confirmation $i/${ops.size}\nRequests:" +
+          ops.mkString("\n    ", "\n     ", "") + s"\n$ex")
       }
       val replies = repliesUnsorted.sortBy(_.id)
       if (replies != expectedReplies) {
-        val pairs = (replies zip expectedReplies).zipWithIndex filter (x => x._1._1 != x._1._2)
-        fail("unexpected replies:" + pairs.map(x => s"at index ${x._2}: got ${x._1._1}, expected ${x._1._2}").mkString("\n    ", "\n    ", ""))
+        val pairs = (replies zip expectedReplies).zipWithIndex
+          .filter(x => x._1._1 != x._1._2)
+        fail("unexpected replies:" + pairs.map(x => s"at index ${x._2}: got ${x._1._1}, expected ${x._1._2}")
+          .mkString("\n    ", "\n    ", ""))
       }
     }
 
@@ -40,18 +49,161 @@ class BinaryTreeSuite extends munit.FunSuite with TestKitBase with ImplicitSende
     // the grader also verifies that enough actors are created
   }
 
+  test("new BinaryTreeSet reads as empty (even though it has a deleted node)") {
+    val topNode = system.actorOf(Props[BinaryTreeSet]())
+
+    topNode ! Contains(testActor, id = 1, 0)
+    expectMsg(ContainsResult(1, result = false))
+  }
+
+  test("inserting the 'removed' element of a new BinaryTreeSet makes it found") {
+    val topNode = system.actorOf(Props[BinaryTreeSet]())
+
+    topNode ! Insert(testActor, id = 1, 0)
+    expectMsg(OperationFinished(id = 1))
+
+    topNode ! Contains(testActor, id = 2, 0)
+    expectMsg(ContainsResult(id = 2, result = true))
+  }
+
+  test("inserting 1 and -1 get found, zero not found cuz not inserted") {
+    val topNode = system.actorOf(Props[BinaryTreeSet]())
+
+    topNode ! Insert(testActor, id = 1, elem = 1)
+    expectMsg(OperationFinished(id = 1))
+
+    topNode ! Insert(testActor, id = 2, elem = -1)
+    expectMsg(OperationFinished(id = 2))
+
+    topNode ! Contains(testActor, id = 3, elem = 1)
+    expectMsg(ContainsResult(id = 3, result = true))
+
+    topNode ! Contains(testActor, id = 4, elem = -1)
+    expectMsg(ContainsResult(id = 4, result = true))
+
+    topNode ! Contains(testActor, id = 5, elem = 0)
+    expectMsg(ContainsResult(id = 5, result = false))
+  }
+
+  test("insert -2, -1, 2, 1 should all be found with 0 not found") {
+    val topNode = system.actorOf(Props[BinaryTreeSet]())
+    val data = List((1, -2), (3, -1), (5, 2), (7, 1))
+    data.foreach { case (id, value) =>
+      topNode ! Insert(testActor, id, value)
+      expectMsg(OperationFinished(id))
+    }
+    data.foreach { case (id, value) =>
+      topNode ! Contains(testActor, id+1, value)
+      expectMsg(ContainsResult(id+1, result = true))
+    }
+
+    val zeroId = 424242 // some unused id, doesn't matter.
+    topNode ! Contains(testActor, zeroId, 0)
+    expectMsg(ContainsResult(zeroId, result = false))
+  }
+
+  test("insert same element twice it should be found") {
+    val topNode = system.actorOf(Props[BinaryTreeSet]())
+    val elem = 19
+    topNode ! Insert(testActor, 12, elem)
+    expectMsg(OperationFinished(12))
+    topNode ! Insert(testActor, 13, elem)
+    expectMsg(OperationFinished(13))
+    topNode ! Contains(testActor, 14, elem)
+    expectMsg(ContainsResult(14, result = true))
+  }
+
+  test("insert 1, search for 2 returns not found") {
+    val topNode = system.actorOf(Props[BinaryTreeSet]())
+    topNode ! Insert(testActor, 1, 1)
+    expectMsg(OperationFinished(1))
+    topNode ! Contains(testActor, 27, 2)
+    expectMsg(ContainsResult(27, result = false))
+  }
+
+  test("removing the root node from an empty BinaryTreeSet completes ok") {
+    val topNode = system.actorOf(Props[BinaryTreeSet]())
+    topNode ! Remove(testActor, 1, defaultRootElement)
+    expectMsg(OperationFinished(1))
+  }
+
+  test("removing an element not in a non-empty BinaryTreeSet is ok") {
+    val topNode = system.actorOf(Props[BinaryTreeSet]())
+    val target = 17
+    val otherElem = target + 2
+    topNode ! Insert(testActor, 1, otherElem)
+    expectMsg(OperationFinished(1))
+    topNode ! Contains(testActor, 2, otherElem)
+    expectMsg(ContainsResult(2, result = true))
+    topNode ! Contains(testActor, 3, target)
+    expectMsg(ContainsResult(3, result = false))  // just confirming not present before removing it.
+    topNode ! Remove(testActor, 4, target)
+    expectMsg(OperationFinished(4))
+    topNode ! Contains(testActor, 5, otherElem)
+    expectMsg(ContainsResult(5, result = true))
+    topNode ! Contains(testActor, 6, target)
+    expectMsg(ContainsResult(6, result = false))
+  }
+
+  test("add a node to an empty BinaryTreeSet, remove it, node not found") {
+    val topNode = system.actorOf(Props[BinaryTreeSet]())
+    val elem = 91
+    topNode ! Insert(testActor, 1, elem)
+    expectMsg(OperationFinished(1))
+    topNode ! Remove(testActor, 2, elem)
+    expectMsg(OperationFinished(2))
+    topNode ! Contains(testActor, 3, elem)
+    expectMsg(ContainsResult(3, result = false))
+  }
+
+  test("add a leaf node to a non-empty BinaryTreeSet, remove it, node not found") {
+    val topNode = system.actorOf(Props[BinaryTreeSet]())
+    val elem = 49
+    topNode ! Insert(testActor, 1, 1) // to make tree not empty
+    expectMsg(OperationFinished(1))
+    topNode ! Insert( testActor, 2, elem)
+    expectMsg(OperationFinished(2))
+    topNode ! Contains(testActor, 3, elem)
+    expectMsg(ContainsResult(3, result = true))
+    topNode ! Remove(testActor, 4, elem)
+    expectMsg(OperationFinished(4))
+    topNode ! Contains(testActor, 5, elem)
+    expectMsg(ContainsResult(5, result = false))
+  }
+
+  test("add an interior node to a non-empty BinaryTreeSet, remove it, node not found but other node still found") {
+    val topNode = system.actorOf(Props[BinaryTreeSet]())
+    val makeItNotEmptyElem = 29
+    val removeTargetElem = 23
+
+    topNode ! Insert(testActor, 1, makeItNotEmptyElem)
+    expectMsg(OperationFinished(1))
+    topNode ! Insert(testActor, 2, removeTargetElem)
+    expectMsg(OperationFinished(2))
+    topNode ! Contains(testActor, 3, makeItNotEmptyElem)
+    expectMsg(ContainsResult(3, result = true))
+    topNode ! Contains(testActor, 4, removeTargetElem)
+    expectMsg(ContainsResult(4, result = true))
+    // now remove the target element, then confirm it isn't found while the other element is still found.
+    topNode ! Remove(testActor, 5, removeTargetElem)
+    expectMsg(OperationFinished(5))
+    topNode ! Contains(testActor, 6, removeTargetElem)
+    expectMsg(ContainsResult(6, result = false))
+    topNode ! Contains(testActor, 7, makeItNotEmptyElem)
+    expectMsg(ContainsResult(7, result = true))
+  }
+
   test("proper inserts and lookups (5pts)") {
     val topNode = system.actorOf(Props[BinaryTreeSet]())
 
     topNode ! Contains(testActor, id = 1, 1)
-    expectMsg(ContainsResult(1, false))
+    expectMsg(ContainsResult(1, result = false))
 
     topNode ! Insert(testActor, id = 2, 1)
-    topNode ! Contains(testActor, id = 3, 1)
-
     expectMsg(OperationFinished(2))
-    expectMsg(ContainsResult(3, true))
-    ()
+
+    topNode ! Contains(testActor, id = 3, 1)
+    expectMsg(ContainsResult(3, result = true))
   }
 
   test("instruction example (5pts)") {
@@ -69,15 +221,77 @@ class BinaryTreeSuite extends munit.FunSuite with TestKitBase with ImplicitSende
     val expectedReplies = List(
       OperationFinished(id=10),
       OperationFinished(id=20),
-      ContainsResult(id=50, false),
-      ContainsResult(id=70, true),
-      ContainsResult(id=80, false),
+      ContainsResult(id=50, result = false),
+      ContainsResult(id=70, result = true),
+      ContainsResult(id=80, result = false),
       OperationFinished(id=100)
     )
 
     verify(requester, ops, expectedReplies)
   }
 
+  test("GC of an empty tree doesn't die") {
+    val topNode = system.actorOf(Props[BinaryTreeSet]())
+    topNode ! GC
+    topNode ! Contains(testActor, 1, defaultRootElement)
+    expectMsg(ContainsResult(1, result = false))
+  }
+
+  test("GC of a single-node BinaryTreeSet doesn't die") {
+    val topNode = system.actorOf(Props[BinaryTreeSet]())
+    val expected = 19
+    topNode ! Insert(testActor, 1, expected)
+    expectMsg(OperationFinished(1))
+    topNode ! GC
+    topNode ! Contains(testActor, 2, expected)
+    expectMsg(ContainsResult(2, result = true))
+  }
+
+  test("GC of a balanced 1-level BinaryTreeSet doesn't die") {
+    val topNode = system.actorOf(Props[BinaryTreeSet]())
+    val left = -31
+    val right = 73
+    topNode ! Insert(testActor, 1, left)
+    expectMsg(OperationFinished(1))
+    topNode ! Insert(testActor, 2, right)
+    expectMsg(OperationFinished(2))
+
+    topNode ! GC
+
+    topNode ! Contains(testActor, 3, left)
+    expectMsg(ContainsResult(3, result = true))
+    topNode ! Contains(testActor, 4, right)
+    expectMsg(ContainsResult(4, result = true))
+  }
+
+  test("GC with internal removed nodes doesn't die") {
+    val topNode = system.actorOf(Props[BinaryTreeSet]())
+    val idGenerator = LazyList.from(1)
+    (1 to 4).foreach { elem =>
+      val id = idGenerator.head
+      topNode ! Insert(testActor, id, elem)
+      expectMsg(OperationFinished(id))
+      topNode ! Contains(testActor, -id, elem)
+      expectMsg(ContainsResult(-id, result = true))
+    }
+    (2 to 3).foreach { elem =>
+      val id = idGenerator.head
+      topNode ! Remove(testActor, id, elem)
+      expectMsg(OperationFinished(id))
+    }
+    // tree is now 0 removed, 1 active, 2 removed, 3 removed, 4 active
+    topNode ! GC
+    List(1, 4).foreach { elem =>
+      val id = idGenerator.head
+      topNode ! Contains(testActor, id, elem)
+      expectMsg(ContainsResult(id, result = true))
+    }
+    List(0, 2, 3).foreach { elem =>
+      val id = idGenerator.head
+      topNode ! Contains(testActor, id, elem)
+      expectMsg(ContainsResult(id, result = false))
+    }
+  }
 
   test("behave identically to built-in set (includes GC) (40pts)") {
     val rnd = new Random()
@@ -110,7 +324,7 @@ class BinaryTreeSuite extends munit.FunSuite with TestKitBase with ImplicitSende
     }
 
     val requester = TestProbe()
-    val topNode = system.actorOf(Props[BinaryTreeSet]())
+    val topNode = system.actorOf(Props[BinaryTreeSet](), "topNode")
     val count = 1000
 
     val ops = randomOperations(requester.ref, count)
@@ -122,4 +336,5 @@ class BinaryTreeSuite extends munit.FunSuite with TestKitBase with ImplicitSende
     }
     receiveN(requester, ops, expectedReplies)
   }
+
 }
