@@ -38,7 +38,6 @@ import actorbintree.BinaryTreeNode.CopyTo
 import akka.actor._
 import akka.event.LoggingReceive
 
-import scala.annotation.tailrec
 import scala.collection.immutable.Queue
 
 object BinaryTreeSet {
@@ -125,13 +124,14 @@ class BinaryTreeSet extends Actor with ActorLogging {
       root ! Remove(requester, id, elem)
 
     case GC =>
+      // If you name the actor here, what will you use for the next GC?  It has to be unique.  Which is why
+      // I bailed on using a name here.
       val newRoot = context.actorOf(
-        Props(classOf[BinaryTreeNode], defaultRootElement, true),
-        s"NewRoot-elem-$defaultRootElement")
-      log.debug("tell {} to CopyTo({})", root, newRoot)
+        Props(classOf[BinaryTreeNode], defaultRootElement, true))
+      log.debug("GC BinaryTreeSet normal: tell {} to CopyTo({})", root, newRoot)
       root ! CopyTo(newRoot)
       context.become(garbageCollecting(newRoot))
-      log.debug("changed state to garbageCollecting({})", newRoot)
+      log.debug("GC BinaryTreeSet normal: changed state to garbageCollecting({})", newRoot)
   }
 
   // optional
@@ -142,29 +142,27 @@ class BinaryTreeSet extends Actor with ActorLogging {
   def garbageCollecting(newRoot: ActorRef): Receive = LoggingReceive {
     case op: Operation =>
       pendingQueue = pendingQueue.enqueue(op)
-      log.debug("GC BinaryTreeSet: received and queued {}, pending queue now {}",
+      log.debug("GC BinaryTreeSet garbageCollecting: received and queued {}, pending queue now {}",
         op, pendingQueue)
 
-    case BinaryTreeNode.CopyFinished =>
-      log.debug("GC BinaryTreeSet: GCCompleted received")
-      root = newRoot
-      log.debug("GC BinaryTreeSet: set root = {}", newRoot)
-      playQueuedOperations(pendingQueue)
-      pendingQueue = Queue.empty[Operation]
-      log.debug("GC BinaryTreeSet: pending queue reset to {}", pendingQueue)
-      context.become(receive)
-      log.debug("GC BinaryTreeSet: set context back to normal, GC complete")
-  }
+    case GC =>
+      log.debug("GC BinaryTreeSet garbageCollecting: GC received from {}, already doing GC, ignored",
+        sender())
 
-  @tailrec
-  private def playQueuedOperations(q: Queue[Operation]): Unit = q.dequeueOption match {
-    case None =>
-      // empty queue, we're done
-      ()
-    case Some((operation, qWithoutOperation)) =>
-      log.debug("GC BinaryTreeSet: sending queued operation {} to {}", operation, root)
-      root ! operation
-      playQueuedOperations(qWithoutOperation)
+    case BinaryTreeNode.CopyFinished =>
+      log.debug("GC BinaryTreeSet garbageCollecting: GCCompleted received")
+      root = newRoot
+      log.debug("GC BinaryTreeSet garbageCollecting: set root = {}", newRoot)
+      pendingQueue.foreach { operation =>
+        log.debug("GC BinaryTreeSet garbageCollecting: sending queued operation {} to {}",
+          operation, root)
+        root ! operation
+      }
+      pendingQueue = Queue.empty[Operation]
+      log.debug("GC BinaryTreeSet garbageCollecting: pending queue reset to {}", pendingQueue)
+
+      context.become(receive)
+      log.debug("GC BinaryTreeSet garbageCollecting: set context back to normal, GC complete")
   }
 
 } // class BinaryTreeSet
@@ -286,56 +284,53 @@ class BinaryTreeNode(val elem: Int, initiallyRemoved: Boolean) extends Actor wit
       goToNode(Remove.Name, requester, subtrees, direction, id)(ifFound)(ifNotFound)
 
     case CopyTo(node) =>
-      // Insert myself into the new BinaryTreeSet `node` if I'm not removed.  I need an ID.  Would be nice to be unique.
-      // What's unique?  My element value!  So use that as my message ID for garbage collecting.
-      if (! removed) {
-        val id = elem
-        log.debug("GC BinaryTreeNode: {} valid to copy, inserting elem {} id {} into {}",
-          self, elem, id, node)
-        node ! Insert(self, id, elem)
-        log.debug("GC BinaryTreeNode: {} change state to awaitInsertCompleted({})", self, node)
-        context.become(awaitInsertCompleted(node, subtrees))
+      val children = subtrees.values.toList
+      if (removed && children.isEmpty) {
+        log.debug("GC BinaryTreeNode: {} removed, DID NOT insert into new BinaryTreeSet and no children, so done")
+        sendGCCompleted()
       } else {
-        log.debug("GC BinaryTreeNode: {} removed, DID NOT insert into new BinaryTreeSet", self)
-        tellChildrenCopyTo(subtrees.values.toList, node)
+        if (!removed) {
+          // Insert myself into the new BinaryTreeSet `node` if I'm not removed.  I need an ID.  Would be nice to
+          // be unique.  What's unique?  My element value!  So use that as my message ID for garbage collecting.
+          val id = elem
+          log.debug("GC BinaryTreeNode: {} valid to copy, inserting elem {} id {} into {}",
+            self, elem, id, node)
+          node ! Insert(self, id, elem)
+        } else {
+          log.debug("GC BinaryTreeNode: {} removed, DID NOT insert into new BinaryTreeSet", self)
+        }
+        log.debug("GC BinaryTreeNode: {} has children {}, tell them to CopyTo({})",
+          self, children, node)
+        children.foreach(_ ! CopyTo(node))
+        // if removed, we are done with self insert already.  If not removed, then we are not done.  In other words,
+        // insertConfirmed here is the same as our `removed` status.
+        log.debug("GC BinaryTreeNode: {} state becomes awaitGCCompleted({}, {})",
+          self, children, removed)
+        context.become(awaitGCCompleted(children, removed))
       }
 
-  }
-
-  // Looking for an OperationFinished message with my `elem` as its message id.  Assuming I get it,
-  // then tell my children to copy themselves.  That routine will take care of finishing the CopyTo operation.
-  private def awaitInsertCompleted(node: ActorRef, subtrees: Map[Position, ActorRef]): Receive = LoggingReceive {
-    case OperationFinished(id: Int) if id == elem =>
-        log.debug("GC BinaryTreeNode awaitInsertCompleted: got expected Insert completed notification " +
-          "id {} from {}", id, sender())
-        tellChildrenCopyTo(subtrees.values.toList, node)
-  }
-
-  // Tell my children to CopyTo(node).  But if I have no children, I'm actually Done copying.
-  private def tellChildrenCopyTo(children: List[ActorRef], node: ActorRef): Unit = {
-    if (children.isEmpty) sendGCCompleted() else {
-      log.debug("GC BinaryTreeNode: {} has children {}, tell them to CopyTo({})",
-        self, children, node)
-      children.foreach(_ ! CopyTo(node))
-      log.debug("GC BinaryTreeNode: {} state becomes awaitGCCompleted({})", self, children)
-      context.become(awaitGCCompleted(children))
-    }
   }
 
   // Because each BinaryTreeNode stops itself once it is finished doing CopyTo(), this current instance cannot
   // return to its `normal` state.  That `normal` state now exists in the new BinaryTreeSet.  This means we do
   // not need to remember our old children (because they are stopping themselves when they are done CopyTo) or
   // whether or not we are removed.
-  private def awaitGCCompleted(waitingForChildren: List[ActorRef]): Receive = LoggingReceive {
+  private def awaitGCCompleted(waitingForChildren: List[ActorRef], insertConfirmed: Boolean): Receive = LoggingReceive {
+    case OperationFinished(_) =>
+      if (waitingForChildren.isEmpty) sendGCCompleted() else {
+        log.debug("GC BinaryTreeNode copying: {} Insert done, still waiting for {}",
+          self, waitingForChildren)
+        context.become(awaitGCCompleted(waitingForChildren, insertConfirmed = true))
+      }
     case CopyFinished =>
       val nowWaitingFor = waitingForChildren.filter(_ != sender())
-      if (nowWaitingFor.isEmpty) {
+      if (nowWaitingFor.isEmpty && insertConfirmed) {
         log.debug("GC BinaryTreeNode awaitGCCompleted: {} children finished", self)
         sendGCCompleted()
       } else {
         log.debug("GC BinaryTreeNode awaitGCCompleted: {} still waiting for {}",
           self, nowWaitingFor)
-        context.become(awaitGCCompleted(nowWaitingFor))
+        context.become(awaitGCCompleted(nowWaitingFor, insertConfirmed))
       }
   }
 
