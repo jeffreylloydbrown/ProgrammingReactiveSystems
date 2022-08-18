@@ -45,7 +45,7 @@ For a more detailed discussion of these restrictions and on how lifting them wou
 
 The key-value store and its environment consists of the following components:
 
--   **The clustered key-value store:** A set of nodes that store key value pairs in a distributed fashion, cooperating to maintain a certain set of guarantees (specified in section _“System Behavior - Consistency guarantees”_). This cluster of nodes consists of replicas and the provided Arbiter and Persistence modules:
+-   **The clustered key-value store:** A set of nodes that store key value pairs in a distributed fashion, cooperating to maintain a certain set of guarantees (specified in section _“System Behavior - Consistency guarantees” _). This cluster of nodes consists of replicas and the provided Arbiter and Persistence modules:
     
 -   **Clients:** Entities that communicate with one of the replicas to update or read key-value pairs.
     
@@ -152,18 +152,18 @@ A positive OperationAck reply must be sent as soon as
 
 -   the change in question has been handed down to the Persistence module (provided) **and** a corresponding acknowledgement has been received from it _(the persistence module is "flaky"—it fails randomly from time to time—and it is your task to keep it alive while retrying unacknowledged persistence operations until they succeed, see the persistence section for details)_
     
--   replication of the change in question has been initiated **and** all of the secondary replicas have acknowledged the replication of the update.
+-   replication of the change in question has been initiated **and** all the secondary replicas have acknowledged the replication of the update.
     
 
 If replicas leave the cluster, which is signalled by sending a new Replicas message to the primary, then outstanding acknowledgements of these replicas must be waived. This can lead to the generation of an OperationAck triggered indirectly by the Replicas message.
 
-A negative OperationFailed reply must be sent if the conditions for sending an OperationAck are not met within the 1 second maximum response time.
+A negative OperationFailed reply must be sent if the conditions for sending an OperationAck are not met within the 1-second maximum response time.
 
 ## Consistency in the case of failed replication or persistence
 
-Assuming in the above scenario that the last write fails (i.e. an OperationFailed is returned), replication to some replicas may have been successful while it failed on others. Therefore in this case the property that eventually all replicas converge on the same value for key2 is not provided by this simplified key–value store. In order to restore consistency a later write to key2 would have to succeed. Lifting this restriction is an interesting exercise on its own, but it is outside of the scope of this course.
+Assuming in the above scenario that the last write fails (i.e. an OperationFailed is returned), replication to some replicas may have been successful while it failed on others. Therefore, in this case the property that eventually all replicas converge on the same value for key2 is not provided by this simplified key–value store. In order to restore consistency a later write to key2 would have to succeed. Lifting this restriction is an interesting exercise on its own, but it is outside the scope of this course.
 
-One consequence of this restriction is that each replica uses this freedom to immediately hand out the updated value to subsequently reading clients, even before the the new value has been persisted locally, and no rollback is attempted in case of failure.
+One consequence of this restriction is that each replica uses this freedom to immediately hand out the updated value to subsequently reading clients, even before the new value has been persisted locally, and no rollback is attempted in case of failure.
 
 ## Which value to expect while an update is outstanding?
 
@@ -204,16 +204,16 @@ When your actor starts, it must send a Join message to the Arbiter and then choo
 
 The primary replica must provide the following features:
 
--   The primary must accept update and lookup operations from clients following the Key-Value protocol like Insert, Remove or Get as it is described in the _“Clients and The KV Protocol”_ section, respecting the consistency guarantees described in _“Guarantees for clients contacting the primary replica”_.
+-   The primary must accept update and lookup operations from clients following the Key-Value protocol like Insert, Remove or Get as it is described in the _“Clients and The KV Protocol” _ section, respecting the consistency guarantees described in _“Guarantees for clients contacting the primary replica” _.
     
--   The primary must replicate changes to the secondary replicas of the system. It must also react to changes in membership (whenever it gets a Replicas message from the Arbiter) and start replicating to newly joined nodes, and stop replication to nodes that have left; the latter implies terminating the corresponding Replicator actor. More details can be found in the section _“Replication Protocol”_.
+-   The primary must replicate changes to the secondary replicas of the system. It must also react to the changes in membership (whenever it gets a Replicas message from the Arbiter) and start replicating to newly joined nodes, and stop replication to nodes that have left; the latter implies terminating the corresponding Replicator actor. More details can be found in the section _“Replication Protocol” _.
     
 
 The secondary replicas must provide the following features:
 
--   The secondary nodes must accept the lookup operation (Get) from clients following the Key-Value protocol while respecting the guarantees described in _“Guarantees for clients contacting the secondary replica”_.
+-   The secondary nodes must accept the lookup operation (Get) from clients following the Key-Value protocol while respecting the guarantees described in _“Guarantees for clients contacting the secondary replica” _.
     
--   The replica nodes must accept replication events, updating their current state (see _“Replication Protocol”_).
+-   The replica nodes must accept replication events, updating their current state (see _“Replication Protocol” _).
     
 
 ### The Replication Protocol
@@ -239,7 +239,7 @@ The second pair is used by the replicator when communicating with its partner re
 
 -   Snapshot(key, valueOption, seq) is sent by the Replicator to the appropriate secondary replica to indicate a new state of the given key. valueOption has the same meaning as for Replicate messages. The sender of the Snapshot message shall be the Replicator. The Snapshot message provides a sequence number (seq) to enforce ordering between the updates. Updates for a given secondary replica must be processed in contiguous ascending sequence number order; this ensures that updates for every single key are applied in the correct order. Each Replicator uses its own number sequence starting at zero. When a snapshot arrives at a Replica with a sequence number which is greater than the currently expected number, then that snapshot must be ignored (meaning no state change and no reaction). When a snapshot arrives at a Replica with a sequence number which is smaller than the currently expected number, then that snapshot must be ignored and immediately acknowledged as described below. The sender reference when sending the Snapshot message must be the Replicator actor (not the primary replica actor or any other).
     
--   SnapshotAck(key, seq) is the reply sent by the secondary replica to the Replicator as soon as the update is persisted locally by the secondary replica. The replica might never send this reply in case it is unable to persist the update. The sender of the SnapshotAck message shall be the secondary Replica. The acknowledgement is sent immediately for requests whose sequence number is less than the next expected number. The expected number is set to the greater of the previously expected number and the sequence number just acknowledged, incremented by one
+-   SnapshotAck(key, seq) is the reply sent by the secondary replica to the Replicator as soon as the update is persisted locally by the secondary replica. The replica might never send this reply in case it is unable to persist the update. The sender of the SnapshotAck message shall be the secondary Replica. The acknowledgement is sent immediately for requests whose sequence number is less than the next expected number. The expected number is set to the greatest of the previously expected number and the sequence number just acknowledged, incremented by one
     
 
 You should note that the Replicator may handle multiple snapshots of a given key in parallel (i.e. their replication has been initiated but not yet completed). It is allowed—but not required— to batch changes before sending them to the secondary replica, provided that each replication request is acknowledged properly and in the right sequence when complete. An example:
@@ -255,7 +255,7 @@ might have reached the Replicator before it got around to send a Snapshot messag
 ```
 skipping the state where a\_key contains the value value1.
 
-Since the replication protocol is meant to symbolize remote replication you must consider the case that either a Snapshot message or its corresponding SnapshotAck message is lost on the way. Therefore the Replicator must make sure to periodically retransmit all unacknowledged changes. For grading purposes it is assumed that this happens roughly every 100 milliseconds. To allow for batching (see above) we will assume that a lost Snapshot message will lead to a resend at most 200 milliseconds after the Replicate request was received (again, the ActorSystem’s scheduler service is considered precise enough for this purpose).
+Since the replication protocol is meant to symbolize remote replication you must consider the case that either a Snapshot message or its corresponding SnapshotAck message is lost on the way. Therefore, the Replicator must make sure to periodically retransmit all unacknowledged changes. For grading purposes it is assumed that this happens roughly every 100 milliseconds. To allow for batching (see above) we will assume that a lost Snapshot message will lead to a resend at most 200 milliseconds after the Replicate request was received (again, the ActorSystem’s scheduler service is considered precise enough for this purpose).
 
 ### Persistence
 
@@ -268,9 +268,9 @@ The used message types are:
 -   Persisted(key, id) is sent by the Persistence actor as reply in case the corresponding request was successful; no reply is sent otherwise. The reply is sent to the sender of the Persist message.  Note, however, that the sender of the Persisted message might not be the Persistence actor (in some tests, the Persisted message will be sent by a wrapper actor).
     
 
-The provided implementation of this persistence service is a mock in the true sense, since it is rather unreliable: every now and then it will fail with an exception and not acknowledge the current request. It is the job of the Replica actor to create and appropriately supervise the Persistence actor; for the purpose of this exercise any strategy will work, which means that you can experiment with different designs based on resuming, restarting or stopping and recreating the Persistence actor. To this end your Replica does not receive an ActorRef but a Props for this actor, implying that the Replica has to initially create it as well.
+The provided implementation of this persistence service is a mock in the true sense, since it is rather unreliable: sometimes it will fail with an exception and not acknowledge the current request. It is the job of the Replica actor to create and appropriately supervise the Persistence actor; for the purpose of this exercise any strategy will work, which means that you can experiment with different designs based on resuming, restarting or stopping and recreating the Persistence actor. To this end your Replica does not receive an ActorRef but a Props for this actor, implying that the Replica has to initially create it as well.
 
-For grading purposes it is expected that Persist is retried before the 1 second response timeout in case persistence failed. The id used in retried Persist messages must match the one which was used in the first request for this particular update.
+For grading purposes it is expected that Persist is retried before the 1-second response timeout in case persistence failed. The id used in retried Persist messages must match the one which was used in the first request for this particular update.
 
 # Your Task
 
@@ -305,7 +305,7 @@ This section is meant to offer further insights for those who want to take the a
 
 Accepting writes only on one node at any given time simplifies conflict resolution, because request arrival order at that node can be used to serialize updates to a given key. The downside of this is that this node clearly limits the amount of requests that can be handled per second, it is a single point of bottleneck.
 
-In order to scale the possible update rate beyond what a single node can digest it would also be possible to divide the key space into shards and distribute them across the members, making each member a primary for a certain portion of the key space. The clients would then need to either be told which one the right node is for updating a certain key, or every node could include a ConsistentHashingRouter which dispatches incoming requests to the right node on the client’s behalf (see the diagram below). Moving the primary role for a shard from one member to another would then be necessary to rebalance the allocation when nodes join or leave the cluster.
+In order to scale the possible update rate beyond what a single node can digest it would also be possible to divide the key space into shards and distribute them across the members, making each member a primary for a certain portion of the key space. The clients would then need to either be told which one the right node is for updating a certain key, or every node could include a ConsistentHashingRouter which dispatches incoming requests to the right node on the client’s behalf (see the diagram below). Moving the primary role for a shard from one member to another would then be necessary to balance the allocation when nodes join or leave the cluster.
 
 ![](https://d3c33hcgiwev3.cloudfront.net/imageAssetProxy.v1/DCymMaAjQ62spjGgI7OtRw_93cc147e6eb34be5849a020cdce13d49_cluster.png?expiry=1660953600000&hmac=aDPb3qmYWfzl4Te3UK1AifXQMn3up0nOtEc3YfVaTwk)
 
@@ -323,7 +323,7 @@ A service which reliably handles membership is available in the form of the Akka
 
 **The update rate is low**
 
-Without this restriction the resend mechanism for example in the Replicator would have to manage the size of the buffer in which snapshots are kept while awaiting their acknowledgement. This means that the replication mechanism could either lose updates or the Replica would need to start rejecting requests with OperationFailed as soon as a limit on the number of outstanding requests is exceeded.
+Without this restriction our resend mechanism for example in the Replicator would have to manage the size of the buffer in which snapshots are kept while awaiting their acknowledgement. This means that the replication mechanism could either lose updates or the Replica would need to start rejecting requests with OperationFailed as soon as a limit on the number of outstanding requests is exceeded.
 
 Especially when considering the next restriction, latency of confirmations is a performance sensitive topic. One further possible optimization is to distribute the burden of ensuring consistency between the primary and secondary nodes by requiring that only a certain number of secondaries have sent their confirmation before acknowledging an update. In order to restore consistency in case of a replication failure (e.g. if the primary stops working for whatever reason) the secondaries have to ask their peers for the key and a reply is only sent once enough have replied with the same value. If the number of write confirmations is W and the count of agreeing reads is denoted R, then the condition for consistency is R+W>N, where N is the total number of replicas. This equation must be interpreted with some care because N can change during a replication or read process.
 
@@ -335,7 +335,7 @@ Assuming that the primary does not fail for a sufficiently long time period afte
 
 **Clients are expected not to reuse request IDs**
 
-This restriction makes your solution simpler and it also removes the need for some grading tests which would have been hard to formulate in a way which does not assume too much about your solution. In a real system you might even find this restriction as specified operational requirement.
+This restriction makes your solution simpler, and it also removes the need for some grading tests which would have been hard to formulate in a way which does not assume too much about your solution. In a real system you might even find this restriction as specified operational requirement.
 
 ### How to submit
 
