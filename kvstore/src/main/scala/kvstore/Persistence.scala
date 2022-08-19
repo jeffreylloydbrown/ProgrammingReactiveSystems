@@ -1,8 +1,11 @@
 package kvstore
 
-import akka.actor.{Props, Actor}
+import akka.actor.{Actor, Props}
+import akka.event.LoggingReceive
+
 import scala.util.Random
 
+//noinspection SimplifyFactoryMethod
 object Persistence {
   case class Persist(key: String, valueOption: Option[String], id: Long)
   case class Persisted(key: String, id: Long)
@@ -15,7 +18,7 @@ object Persistence {
 class Persistence(flaky: Boolean) extends Actor {
   import Persistence._
 
-  def receive = {
+  def receive: Receive = LoggingReceive {
     case Persist(key, _, id) =>
       if (!flaky || Random.nextBoolean()) sender() ! Persisted(key, id)
       else throw new PersistenceException

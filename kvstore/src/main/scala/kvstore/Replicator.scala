@@ -3,6 +3,8 @@ package kvstore
 import akka.actor.Props
 import akka.actor.Actor
 import akka.actor.ActorRef
+import akka.event.LoggingReceive
+
 import scala.concurrent.duration._
 
 object Replicator {
@@ -29,7 +31,7 @@ class Replicator(val replica: ActorRef) extends Actor {
   var pending = Vector.empty[Snapshot]
   
   var _seqCounter = 0L
-  def nextSeq() = {
+  private def nextSeq() = {
     val ret = _seqCounter
     _seqCounter += 1
     ret
@@ -37,7 +39,7 @@ class Replicator(val replica: ActorRef) extends Actor {
 
   
   /* TODO Behavior for the Replicator. */
-  def receive: Receive = {
+  def receive: Receive = LoggingReceive {
     case _ =>
   }
 

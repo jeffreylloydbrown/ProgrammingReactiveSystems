@@ -1,8 +1,10 @@
 package kvstore
 
-import akka.actor.{ OneForOneStrategy, PoisonPill, Props, SupervisorStrategy, Terminated, ActorRef, Actor }
+import akka.actor.{Actor, ActorRef, OneForOneStrategy, PoisonPill, Props, SupervisorStrategy, Terminated}
+import akka.event.LoggingReceive
 import kvstore.Arbiter._
-import akka.pattern.{ ask, pipe }
+import akka.pattern.{ask, pipe}
+
 import scala.concurrent.duration._
 import akka.util.Timeout
 
@@ -40,18 +42,18 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   var replicators = Set.empty[ActorRef]
 
 
-  def receive = {
+  def receive: Receive = LoggingReceive {
     case JoinedPrimary   => context.become(leader)
     case JoinedSecondary => context.become(replica)
   }
 
   /* TODO Behavior for  the leader role. */
-  val leader: Receive = {
+  val leader: Receive = LoggingReceive {
     case _ =>
   }
 
   /* TODO Behavior for the replica role. */
-  val replica: Receive = {
+  val replica: Receive = LoggingReceive {
     case _ =>
   }
 
