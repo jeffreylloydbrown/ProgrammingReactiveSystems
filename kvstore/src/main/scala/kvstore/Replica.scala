@@ -1,6 +1,6 @@
 package kvstore
 
-import akka.actor.{Actor, ActorRef, OneForOneStrategy, PoisonPill, Props, SupervisorStrategy, Terminated}
+import akka.actor.{Actor, ActorLogging, ActorRef, OneForOneStrategy, PoisonPill, Props, SupervisorStrategy, Terminated}
 import akka.event.LoggingReceive
 import kvstore.Arbiter._
 import akka.pattern.{ask, pipe}
@@ -23,9 +23,9 @@ object Replica {
   case class GetResult(key: String, valueOption: Option[String], id: Long) extends OperationReply
 
   def props(arbiter: ActorRef, persistenceProps: Props): Props = Props(new Replica(arbiter, persistenceProps))
-}
+} // object Replica
 
-class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
+class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with ActorLogging {
   import Replica._
   import Replicator._
   import Persistence._
@@ -48,14 +48,28 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   }
 
   /* TODO Behavior for  the leader role. */
+  // TODO failure handling and sending of OperationFailed(id)
   val leader: Receive = LoggingReceive {
-    case _ =>
+    case Insert(key: String, value: String, id: Long) =>
+      kv += key->value
+      // TODO replicate to secondaries
+      sender() ! OperationAck(id)
+    case Remove(key: String, id: Long) =>
+      kv -= key
+      // TODO replicate to secondaries
+      sender() ! OperationAck(id)
+    case Get(key: String, id: Long) =>
+      sender() ! GetResult(key, kv.get(key), id)
   }
 
   /* TODO Behavior for the replica role. */
   val replica: Receive = LoggingReceive {
-    case _ =>
+    case Get(key: String, id: Long) =>
+      sender() ! GetResult(key, kv.get(key), id)
   }
 
-}
+  // Leave this at the bottom to make sure it always happens last.
+  arbiter ! Join
+
+} // class Replica
 
