@@ -1,19 +1,17 @@
 package kvstore
 
 import akka.testkit.TestProbe
-
-import scala.concurrent.duration._
 import kvstore.Arbiter.{Join, JoinedSecondary}
 
-import scala.util.Random
-import scala.util.control.NonFatal
+import scala.concurrent.duration._
 
 trait Step2_SecondarySpec { this: KVStoreSuite =>
 
   test("Step2-case1: Secondary (in isolation) should properly register itself to the provided Arbiter") {
     val arbiter = TestProbe()
-        system.actorOf(Replica.props(arbiter.ref, Persistence.props(flaky = false)), "step2-case1-secondary")
-    
+    system.actorOf(Replica.props(arbiter.ref, Persistence.props(flaky = false)),
+      "step2-case1-secondary")
+
     arbiter.expectMsg(Join)
     ()
   }
@@ -23,8 +21,9 @@ trait Step2_SecondarySpec { this: KVStoreSuite =>
 
     val arbiter = TestProbe()
     val replicator = TestProbe()
-        val secondary = system.actorOf(Replica.props(arbiter.ref, Persistence.props(flaky = false)), "step2-case2-secondary")
-        val client = session(secondary)
+    val secondary = system.actorOf(Replica.props(arbiter.ref,
+      Persistence.props(flaky = false)), "step2-case2-secondary")
+    val client = session(secondary)
 
     arbiter.expectMsg(Join)
     arbiter.send(secondary, JoinedSecondary)
@@ -49,8 +48,9 @@ trait Step2_SecondarySpec { this: KVStoreSuite =>
 
     val arbiter = TestProbe()
     val replicator = TestProbe()
-        val secondary = system.actorOf(Replica.props(arbiter.ref, Persistence.props(flaky = false)), "step2-case3-secondary")
-        val client = session(secondary)
+    val secondary = system.actorOf(Replica.props(arbiter.ref,
+      Persistence.props(flaky = false)), "step2-case3-secondary")
+    val client = session(secondary)
 
     arbiter.expectMsg(Join)
     arbiter.send(secondary, JoinedSecondary)
@@ -79,8 +79,9 @@ trait Step2_SecondarySpec { this: KVStoreSuite =>
 
     val arbiter = TestProbe()
     val replicator = TestProbe()
-        val secondary = system.actorOf(Replica.props(arbiter.ref, Persistence.props(flaky = false)), "step2-case4-secondary")
-        val client = session(secondary)
+    val secondary = system.actorOf(Replica.props(arbiter.ref,
+      Persistence.props(flaky = false)), "step2-case4-secondary")
+    val client = session(secondary)
 
     arbiter.expectMsg(Join)
     arbiter.send(secondary, JoinedSecondary)
@@ -94,7 +95,10 @@ trait Step2_SecondarySpec { this: KVStoreSuite =>
     replicator.send(secondary, Snapshot("k1", Some("v2"), 0L))
     replicator.expectMsg(SnapshotAck("k1", 0L))
     assertEquals(client.get("k1"), Some("v2"))
+
+    replicator.send(secondary, Snapshot("k1", None, 12L))
+    replicator.expectNoMessage(300.milliseconds)
+    assertEquals(client.get("k1"), Some("v2"))
   }
 
-  
 }
