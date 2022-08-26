@@ -138,7 +138,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
     // sequence numbers.
     case Snapshot(key: String, _, seq: Long) if seq < expectedSnapshotSequenceNumber =>
       sender() ! SnapshotAck(key, seq)
-    case Snapshot =>
+    case _: Snapshot =>
       ()
 
     case Persisted(key: String, seq: Long) if seq == expectedSnapshotSequenceNumber =>

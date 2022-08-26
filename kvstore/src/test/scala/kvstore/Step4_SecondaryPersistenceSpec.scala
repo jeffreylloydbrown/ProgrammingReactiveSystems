@@ -68,4 +68,37 @@ trait Step4_SecondaryPersistenceSpec { this: KVStoreSuite =>
     assertEquals(client.get("k1"), Some("v1"))
   }
 
+  test("Step4-case3: Secondary handles Snapshot requests appropriately while waiting for Persisted message"){
+    import Replicator._
+
+    val arbiter = TestProbe()
+    val persistence = TestProbe()
+    val replicator = TestProbe()
+    val secondary = system.actorOf(Replica.props(arbiter.ref,
+      probeProps(persistence)), "step4-case3-secondary")
+    val client = session(secondary)
+
+    arbiter.expectMsg(Join)
+    arbiter.send(secondary, JoinedSecondary)
+
+    assertEquals(client.get("k1"), None)
+
+    val seq = 0L
+
+    replicator.send(secondary, Snapshot("k1", Some("v1"), seq))
+
+    // now secondary is in secondaryAwaitPersisted state.
+    // "future" sequence number is ignored.
+    replicator.send(secondary, Snapshot("k2", Some("v2"), seq+1))
+    replicator.expectNoMessage(500.milliseconds)
+
+    // sequence number that's currently in progress is ignore.
+    replicator.send(secondary, Snapshot("k1", Some("v1"), seq))
+    replicator.expectNoMessage(500.milliseconds)
+
+    // old sequence number is immediately acknowledged
+    replicator.send(secondary, Snapshot("k3", Some("v3"), seq-1))
+    replicator.expectMsg(10.milliseconds, SnapshotAck("k3", seq-1))
+  }
+
 }
