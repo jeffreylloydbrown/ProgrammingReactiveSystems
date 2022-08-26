@@ -1,9 +1,11 @@
 package kvstore
 
-import akka.actor.{Actor, ActorLogging, ActorRef, Props}
+import akka.actor.{Actor, ActorLogging, ActorRef, Props, ReceiveTimeout}
 import akka.event.LoggingReceive
 import kvstore.Arbiter._
 import kvstore.Persistence.{Persist, Persisted}
+
+import scala.concurrent.duration._
 
 object Replica {
   sealed trait Operation {
@@ -20,6 +22,8 @@ object Replica {
   case class GetResult(key: String, valueOption: Option[String], id: Long) extends OperationReply
 
   def props(arbiter: ActorRef, persistenceProps: Props): Props = Props(new Replica(arbiter, persistenceProps))
+
+  private val PersistenceTimeout = 100.milliseconds
 } // object Replica
 
 class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with ActorLogging {
@@ -27,6 +31,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
   import Replicator._
 
   private val persistence = context.actorOf(persistenceProps)
+  // TODO add DeathWatch on persistence actor
 
   /*
    * The contents of this actor is just a suggestion, you can implement it in any way you like.
@@ -119,19 +124,21 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
         case None =>
           kv -= key
       }
-      persistence ! Persist(key, value, seq)
-      context.become(secondaryAwaitPersisted(sender()))
+      val persistMessage = Persist(key, value, seq)
+      persistence ! persistMessage
+      context.setReceiveTimeout(PersistenceTimeout)
+      context.become(secondaryAwaitPersisted(sender(), persistMessage))
 
   }  // secondary Receive handler
 
-  def secondaryAwaitPersisted(snapshotRequester: ActorRef): Receive = LoggingReceive {
+  def secondaryAwaitPersisted(snapshotRequester: ActorRef, persistMessage: Persist): Receive = LoggingReceive {
     case Get(key: String, id: Long) =>
       sender() ! GetResult(key, kv.get(key), id)
 
     // Thoughts on snapshots while waiting for Persisted message.  If we are here, then we have not
     // yet updated the expectedSnapshotSequenceNumber.  Which means if we receive a Snapshot message with an
     // older ID, we need to immediately acknowledge it and do nothing else (like normal).  If we receive a NEW
-    // Snapshot message, it will have a sequence number high than what we are currently working on.  We can ignore
+    // Snapshot message, it will have a sequence number higher than what we are currently working on.  We can ignore
     // it, the requester will eventually resend it hopefully after we've finished here.  If we get the same sequence
     // number we are already working on, we just ignore the message because we're still working on it.  So... I
     // don't have to queue up Snapshot messages and replay them.  I only have to acknowledge messages with older
@@ -144,9 +151,13 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
     case Persisted(key: String, seq: Long) if seq == expectedSnapshotSequenceNumber =>
       // seq+1 is really good enough--we already know seq == expectedSnapshotSequenceNumber--but this line
       // matches the homework specification.
-      expectedSnapshotSequenceNumber = Math.max(expectedSnapshotSequenceNumber, seq+1)
+      expectedSnapshotSequenceNumber = Math.max(expectedSnapshotSequenceNumber, seq + 1)
       snapshotRequester ! SnapshotAck(key, seq)
+      context.setReceiveTimeout(Duration.Undefined)
       context.become(replica)
+
+    case ReceiveTimeout =>
+      persistence ! persistMessage
   }
 
   // Leave this at the bottom to make sure it always happens last.
