@@ -1,9 +1,9 @@
 package kvstore
 
-import akka.actor.{Actor, ActorLogging, ActorRef, Props, ReceiveTimeout}
+import akka.actor.{Actor, ActorLogging, ActorRef, OneForOneStrategy, Props, ReceiveTimeout, SupervisorStrategy}
 import akka.event.LoggingReceive
 import kvstore.Arbiter._
-import kvstore.Persistence.{Persist, Persisted}
+import kvstore.Persistence.{Persist, Persisted, PersistenceException}
 
 import scala.concurrent.duration._
 
@@ -31,7 +31,10 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
   import Replicator._
 
   private val persistence = context.actorOf(persistenceProps)
-  // TODO add DeathWatch on persistence actor
+
+  override val supervisorStrategy: SupervisorStrategy = OneForOneStrategy() {
+    case _: PersistenceException => SupervisorStrategy.Restart
+  }
 
   /*
    * The contents of this actor is just a suggestion, you can implement it in any way you like.
