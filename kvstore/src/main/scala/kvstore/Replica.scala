@@ -3,6 +3,7 @@ package kvstore
 import akka.actor.{Actor, ActorLogging, ActorRef, Props}
 import akka.event.LoggingReceive
 import kvstore.Arbiter._
+import kvstore.Persistence.{Persist, Persisted}
 
 object Replica {
   sealed trait Operation {
@@ -24,6 +25,8 @@ object Replica {
 class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with ActorLogging {
   import Replica._
   import Replicator._
+
+  private val persistence = context.actorOf(persistenceProps)
 
   /*
    * The contents of this actor is just a suggestion, you can implement it in any way you like.
@@ -116,12 +119,35 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
         case None =>
           kv -= key
       }
-      // just seq+1 is really good enough--we already know seq == expectedSnapshotSequenceNumber--but this line
-      // matches the homework specification.
-      expectedSnapshotSequenceNumber = Math.max(expectedSnapshotSequenceNumber, seq+1)
-      sender() ! SnapshotAck(key, seq)
+      persistence ! Persist(key, value, seq)
+      context.become(secondaryAwaitPersisted(sender()))
 
   }  // secondary Receive handler
+
+  def secondaryAwaitPersisted(snapshotRequester: ActorRef): Receive = LoggingReceive {
+    case Get(key: String, id: Long) =>
+      sender() ! GetResult(key, kv.get(key), id)
+
+    // Thoughts on snapshots while waiting for Persisted message.  If we are here, then we have not
+    // yet updated the expectedSnapshotSequenceNumber.  Which means if we receive a Snapshot message with an
+    // older ID, we need to immediately acknowledge it and do nothing else (like normal).  If we receive a NEW
+    // Snapshot message, it will have a sequence number high than what we are currently working on.  We can ignore
+    // it, the requester will eventually resend it hopefully after we've finished here.  If we get the same sequence
+    // number we are already working on, we just ignore the message because we're still working on it.  So... I
+    // don't have to queue up Snapshot messages and replay them.  I only have to acknowledge messages with older
+    // sequence numbers.
+    case Snapshot(key: String, _, seq: Long) if seq < expectedSnapshotSequenceNumber =>
+      sender() ! SnapshotAck(key, seq)
+    case Snapshot =>
+      ()
+
+    case Persisted(key: String, seq: Long) if seq == expectedSnapshotSequenceNumber =>
+      // seq+1 is really good enough--we already know seq == expectedSnapshotSequenceNumber--but this line
+      // matches the homework specification.
+      expectedSnapshotSequenceNumber = Math.max(expectedSnapshotSequenceNumber, seq+1)
+      snapshotRequester ! SnapshotAck(key, seq)
+      context.become(replica)
+  }
 
   // Leave this at the bottom to make sure it always happens last.
   arbiter ! Join
