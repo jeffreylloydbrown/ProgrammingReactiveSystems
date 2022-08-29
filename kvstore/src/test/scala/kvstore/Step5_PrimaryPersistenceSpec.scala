@@ -16,6 +16,7 @@ trait Step5_PrimaryPersistenceSpec { this: KVStoreSuite =>
 
     arbiter.expectMsg(Join)
     arbiter.send(primary, JoinedPrimary)
+    arbiter.send(primary, Replicas(Set(primary)))
 
     val setId = client.set("foo", "bar")
     val persistId = persistence.expectMsgPF() {
@@ -35,6 +36,7 @@ trait Step5_PrimaryPersistenceSpec { this: KVStoreSuite =>
 
     arbiter.expectMsg(Join)
     arbiter.send(primary, JoinedPrimary)
+    arbiter.send(primary, Replicas(Set(primary)))
 
     val setId = client.set("foo", "bar")
     val persistId = persistence.expectMsgPF() {
@@ -57,6 +59,7 @@ trait Step5_PrimaryPersistenceSpec { this: KVStoreSuite =>
 
     arbiter.expectMsg(Join)
     arbiter.send(primary, JoinedPrimary)
+    arbiter.send(primary, Replicas(Set(primary)))
 
     val setId = client.set("foo", "bar")
     persistence.expectMsgType[Persist]

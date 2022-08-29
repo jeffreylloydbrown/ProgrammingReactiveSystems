@@ -24,6 +24,7 @@ trait Step1_PrimarySpec { this: KVStoreSuite =>
 
     arbiter.expectMsg(Join)
     arbiter.send(primary, JoinedPrimary)
+    arbiter.send(primary, Replicas(Set(primary)))
 
     client.getAndVerify("k1")
     client.setAcked("k1", "v1")
