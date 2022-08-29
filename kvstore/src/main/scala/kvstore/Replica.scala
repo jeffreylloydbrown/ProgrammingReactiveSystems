@@ -5,6 +5,7 @@ import akka.event.LoggingReceive
 import kvstore.Arbiter._
 import kvstore.Persistence.{Persist, Persisted, PersistenceException}
 
+import scala.collection.immutable.Queue
 import scala.concurrent.duration._
 
 object Replica {
@@ -42,9 +43,9 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
 
   var kv = Map.empty[String, String]
   // a map from secondary replicas to replicators
-  var secondaries = Map.empty[ActorRef, Replicator]
+  var secondaries = Map.empty[ActorRef, ActorRef]
   // the current set of replicators
-  var replicators = Set.empty[Replicator]
+  var replicators = Set.empty[ActorRef]
 
 
   def receive: Receive = LoggingReceive {
@@ -54,29 +55,29 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
 
   // We never add or remove a leader in this assignment.  That means the caller needs to remove `self` from
   // the replicas passed here.
-  private def handleAddedReplicas(replicasWithoutMe: Set[ActorRef]): Unit = {
+  private def handleAddedReplicas(newReplicaSet: Set[ActorRef]): Unit = {
     // need to know what replicas in newSecondaries haven't already been seen.  Could be empty.
-    val newlyAddedReplicas: Set[ActorRef] = replicasWithoutMe -- secondaries.keySet
+    val newlyAddedReplicas: Set[ActorRef] = newReplicaSet -- secondaries.keySet
     // make Replicators for each new replica, send the Replicate message for the contents of the store,
     // and return the new replica -> new replicator pair to then update our state.
-    val newSecondaryMapEntries: Set[(ActorRef, Replicator)] = for (toBeAdded <- newlyAddedReplicas) yield {
-      val replicator = new Replicator(toBeAdded)
+    val newSecondaryMapEntries: Set[(ActorRef, ActorRef)] = for (toBeAdded <- newlyAddedReplicas) yield {
+      val replicator = context.actorOf(Props(new Replicator(toBeAdded)))
       val ids= LazyList.from(1).iterator  // Ints for ids here are good enough for homework.
-      kv.foreach { case (key, value) => replicator.self ! Replicate(key, Some(value), ids.next()) }
+      kv.foreach { case (key, value) => replicator ! Replicate(key, Some(value), ids.next()) }
       toBeAdded -> replicator
     }
     secondaries ++= newSecondaryMapEntries
     replicators ++= newSecondaryMapEntries.map(_._2)
   }
 
-  private def handleRemovedReplicas(replicasWithoutMe: Set[ActorRef]): Unit = {
+  private def handleRemovedReplicas(newReplicaSet: Set[ActorRef]): Unit = {
     // also need to know what replicas need to have Replicators stopped.  Could be empty.
-    val newlyRemovedReplicas: Set[ActorRef] = secondaries.keySet -- replicasWithoutMe
+    val newlyRemovedReplicas: Set[ActorRef] = secondaries.keySet -- newReplicaSet
     // stop every Replicator associated with a removed replica, and return those replicators to update our state.
-    val newlyRemovedReplicators: Set[Replicator] = for (toBeStopped <- newlyRemovedReplicas;
-                                                        replicator = secondaries(toBeStopped)
-                                                        ) yield {
-      context.stop(replicator.self)
+    val newlyRemovedReplicators: Set[ActorRef] = for (toBeStopped <- newlyRemovedReplicas;
+                                                      replicator = secondaries(toBeStopped)
+                                                      ) yield {
+      context.stop(replicator)
       replicator
     }
     secondaries --= newlyRemovedReplicas
@@ -86,41 +87,52 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
   /* TODO Behavior for  the leader role. */
   // TODO failure handling and sending of OperationFailed(id)
   val leader: Receive = LoggingReceive {
-    case Insert(key: String, value: String, id: Long) =>
+    case msg @ Insert(key: String, value: String, id: Long) =>
+      log.debug("leader: Insert: {}", msg)
+      log.debug("leader: Insert: replicators = {}", replicators)
       kv += key -> value
-      replicators.map(_.self).foreach(_ ! Replicate(key, Some(value), id))
-      sender() ! OperationAck(id)
+      replicators.foreach(_ ! Replicate(key, Some(value), id))
+      log.debug("leader: Insert: pushed awaitReplicated({})", sender())
+      context.become(awaitReplicated(sender()), discardOld = false)
+
     case Remove(key: String, id: Long) =>
       kv -= key
-      replicators.map(_.self).foreach(_ ! Replicate(key, None, id))
-      sender() ! OperationAck(id)
+      replicators.foreach(_ ! Replicate(key, None, id))
+      log.debug("leader: Remove: pushed awaitReplicated({})", sender())
+      context.become(awaitReplicated(sender()), discardOld = false)
+
     case Get(key: String, id: Long) =>
       sender() ! GetResult(key, kv.get(key), id)
 
     case Replicas(replicas: Set[ActorRef]) =>
-      val replicasWithoutMe = replicas - self
-      handleAddedReplicas(replicasWithoutMe)
-      handleRemovedReplicas(replicasWithoutMe)
-
-    case Replicated(key: String, id: Long) =>
-    // TODO unsure yet what to do with this message when I receive it.  Just know that leader will receive it.
+      handleAddedReplicas(replicas)
+      handleRemovedReplicas(replicas)
+      log.debug("leader: Replicas: after Replicas message, secondaries = {}, replicators = {}", secondaries, replicators)
 
   }  // leader Receive handler.
 
-  var expectedSnapshotSequenceNumber: Long = 0L
+  var pendingQueue: Queue[Operation] = Queue.empty[Operation]
 
-  /* TODO Behavior for the replica role. */
-  val replica: Receive = LoggingReceive {
-    case Get(key: String, id: Long) =>
+  private def awaitReplicated(client: ActorRef): Receive = LoggingReceive {
+    case msg @ Get(key: String, id: Long) =>
+      log.debug("awaitReplicated: Get: msg = {}", msg)
       sender() ! GetResult(key, kv.get(key), id)
 
-    case Snapshot(_, _, seq: Long) if seq > expectedSnapshotSequenceNumber =>
+    case op: Operation =>
+      log.debug("awaitReplicated: Operation: msg = {}", op)
+      pendingQueue.enqueue(op)
+
+    // Here we CAN receive Snapshot messages just like a secondary and need to react to them the same.
+    case msg @ Snapshot(_, _, seq: Long) if seq > expectedSnapshotSequenceNumber =>
       // snapshot must be ignored (no state change and no reaction).  Sender will have to resend it.
+      log.debug("awaitReplicated: Snapshot: msg = {}, ignored", msg)
       ()
-    case Snapshot(key: String, _, seq: Long) if seq < expectedSnapshotSequenceNumber =>
+    case msg @ Snapshot(key: String, _, seq: Long) if seq < expectedSnapshotSequenceNumber =>
+      log.debug("awaitReplicated: Snapshot: msg = {}, immediate ack", msg)
       // already seen a later update, so just ack it
       sender() ! SnapshotAck(key, seq)
-    case Snapshot(key: String, value: Option[String], seq: Long) if seq == expectedSnapshotSequenceNumber =>
+    case msg @ Snapshot(key: String, value: Option[String], seq: Long) if seq == expectedSnapshotSequenceNumber =>
+      log.debug("awaitReplicated: Snapshot: msg = {}, updating", msg)
       value match {
         case Some(aValue) =>
           kv += key -> aValue
@@ -130,12 +142,54 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
       val persistMessage = Persist(key, value, seq)
       persistence ! persistMessage
       context.setReceiveTimeout(PersistenceTimeout)
-      context.become(secondaryAwaitPersisted(sender(), persistMessage))
+      log.debug("awaitReplicated: Snapshot: pushed secondaryAwaitPersisted({}, {})",sender(), persistMessage)
+      context.become(secondaryAwaitPersisted(sender(), persistMessage), discardOld = false)
+
+    case msg @ Replicated(_, id: Long) =>
+      log.debug("awaitReplicated: Replicated: msg = {}, send OperationAck", msg)
+      client ! OperationAck(id)
+      pendingQueue.foreach(operation => self ! operation)
+      pendingQueue = Queue.empty[Operation]
+      log.debug("awaitReplicated: Replicated: become leader by popping")
+      context.unbecome()
+
+  } // awaitReplicated()
+
+  var expectedSnapshotSequenceNumber: Long = 0L
+
+  /* TODO Behavior for the replica role. */
+  val replica: Receive = LoggingReceive {
+    case msg @ Get(key: String, id: Long) =>
+      log.debug("replica: Get: msg = {}", msg)
+      sender() ! GetResult(key, kv.get(key), id)
+
+    case msg @ Snapshot(_, _, seq: Long) if seq > expectedSnapshotSequenceNumber =>
+      log.debug("replica: Snapshot: ignored msg = {}", msg)
+      // snapshot must be ignored (no state change and no reaction).  Sender will have to resend it.
+      ()
+    case msg @Snapshot(key: String, _, seq: Long) if seq < expectedSnapshotSequenceNumber =>
+      log.debug("replica: Snapshot: immediately ack already processed msg = {}", msg)
+      // already seen a later update, so just ack it
+      sender() ! SnapshotAck(key, seq)
+    case msg @ Snapshot(key: String, value: Option[String], seq: Long) if seq == expectedSnapshotSequenceNumber =>
+      log.debug("replica: Snapshot: process msg = {}", msg)
+      value match {
+        case Some(aValue) =>
+          kv += key -> aValue
+        case None =>
+          kv -= key
+      }
+      val persistMessage = Persist(key, value, seq)
+      persistence ! persistMessage
+      context.setReceiveTimeout(PersistenceTimeout)
+      log.debug("replica: Snapshot: pushed secondaryAwaitPersisted({}, {})", sender(), persistMessage)
+      context.become(secondaryAwaitPersisted(sender(), persistMessage), discardOld = false)
 
   }  // secondary Receive handler
 
   def secondaryAwaitPersisted(snapshotRequester: ActorRef, persistMessage: Persist): Receive = LoggingReceive {
-    case Get(key: String, id: Long) =>
+    case msg @ Get(key: String, id: Long) =>
+      log.debug("secondaryAwaitPersisted: Get: msg = {}", msg)
       sender() ! GetResult(key, kv.get(key), id)
 
     // Thoughts on snapshots while waiting for Persisted message.  If we are here, then we have not
@@ -146,20 +200,25 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
     // number we are already working on, we just ignore the message because we're still working on it.  So... I
     // don't have to queue up Snapshot messages and replay them.  I only have to acknowledge messages with older
     // sequence numbers.
-    case Snapshot(key: String, _, seq: Long) if seq < expectedSnapshotSequenceNumber =>
+    case msg @ Snapshot(key: String, _, seq: Long) if seq < expectedSnapshotSequenceNumber =>
+      log.debug("secondaryAwaitPersisted: Snapshot: msg = {}, ack immediately", msg)
       sender() ! SnapshotAck(key, seq)
-    case _: Snapshot =>
+    case msg: Snapshot =>
+      log.debug("secondaryAwaitPersisted: Snapshot: msg = {}, ignored", msg)
       ()
 
-    case Persisted(key: String, seq: Long) if seq == expectedSnapshotSequenceNumber =>
+    case msg @ Persisted(key: String, seq: Long) if seq == expectedSnapshotSequenceNumber =>
+      log.debug("secondaryAwaitPersisted: Persisted: msg = {} with expected number, send SnapshotAck", msg)
       // seq+1 is really good enough--we already know seq == expectedSnapshotSequenceNumber--but this line
       // matches the homework specification.
       expectedSnapshotSequenceNumber = Math.max(expectedSnapshotSequenceNumber, seq + 1)
       snapshotRequester ! SnapshotAck(key, seq)
       context.setReceiveTimeout(Duration.Undefined)
-      context.become(replica)
+      context.unbecome()
+      log.debug("secondaryAwaitPersisted: Persisted: popped context stack")
 
     case ReceiveTimeout =>
+      log.debug("secondaryAwaitPersisted: ReceiveTimeout: resend {}", persistMessage)
       persistence ! persistMessage
   }
 
