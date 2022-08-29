@@ -2,6 +2,7 @@ package kvstore
 
 import akka.actor.{Actor, ActorLogging, ActorRef, Props, ReceiveTimeout}
 import akka.event.LoggingReceive
+import kvstore.Persistence.Persist
 
 import scala.concurrent.duration._
 
@@ -11,6 +12,8 @@ object Replicator {
 
   case class Snapshot(key: String, valueOption: Option[String], seq: Long)
   case class SnapshotAck(key: String, seq: Long)
+
+  case class PersistFailed(persistMessage: Persist)
 
   def props(replica: ActorRef): Props = Props(new Replicator(replica))
 
@@ -40,13 +43,15 @@ class Replicator(val replica: ActorRef) extends Actor with ActorLogging {
 
 
   def receive: Receive = LoggingReceive {
-    case request @ Replicate(key: String, value: Option[String], _) =>
+    case request @ Replicate(key: String, value: Option[String], _: Long) =>
+      log.debug("Replicator receive: Replicate: request = {}", request)
       val mySeqNumber = nextSeq()
       awaitingSnapshotAcks += (mySeqNumber -> (sender(), request))
       replica ! Snapshot(key, value, mySeqNumber)
       setTimeout()
 
-    case SnapshotAck(_, seq: Long) =>
+    case request @ SnapshotAck(_, seq: Long) =>
+      log.debug("Replicator receive: SnapshotAck: request = {}", request)
       awaitingSnapshotAcks.get(seq).foreach {
         case (theSender: ActorRef, replicate: Replicate) =>
           theSender ! Replicated(replicate.key, replicate.id)
@@ -55,11 +60,19 @@ class Replicator(val replica: ActorRef) extends Actor with ActorLogging {
       resetTimeout()
 
     case ReceiveTimeout =>
+      log.debug("Replicator receive: ReceiveTimeout: resend Snapshot for {}", awaitingSnapshotAcks)
       awaitingSnapshotAcks.foreach {
         case (seqNumber, (_, request)) =>
           replica ! Snapshot(request.key, request.valueOption, seqNumber)
       }
       resetTimeout()
+
+    case msg @ PersistFailed(persistMessage: Persist) =>
+      log.debug("Replicator receive: PersistFailed: map to client ID msg = {}", msg)
+      awaitingSnapshotAcks.get(persistMessage.id).foreach {
+        case (theSender: ActorRef, replicate: Replicate) =>
+          theSender ! Replica.PersistFailed(replicate.id)
+      }
 
   } // Replicator Receive handler
 

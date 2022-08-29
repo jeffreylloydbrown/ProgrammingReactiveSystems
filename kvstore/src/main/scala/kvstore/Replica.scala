@@ -22,9 +22,12 @@ object Replica {
   case class OperationFailed(id: Long) extends OperationReply
   case class GetResult(key: String, valueOption: Option[String], id: Long) extends OperationReply
 
+  case class PersistFailed(id: Long)
+
   def props(arbiter: ActorRef, persistenceProps: Props): Props = Props(new Replica(arbiter, persistenceProps))
 
   private val PersistenceTimeout = 100.milliseconds
+  private val MaxTimeUntilPersistFailed: FiniteDuration = 1000.milliseconds
 } // object Replica
 
 class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with ActorLogging {
@@ -143,7 +146,8 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
       persistence ! persistMessage
       context.setReceiveTimeout(PersistenceTimeout)
       log.debug("awaitReplicated: Snapshot: pushed secondaryAwaitPersisted({}, {})",sender(), persistMessage)
-      context.become(secondaryAwaitPersisted(sender(), persistMessage), discardOld = false)
+      context.become(secondaryAwaitPersisted(sender(), persistMessage,
+        MaxTimeUntilPersistFailed), discardOld = false)
 
     case msg @ Replicated(_, id: Long) =>
       log.debug("awaitReplicated: Replicated: msg = {}, send OperationAck", msg)
@@ -151,6 +155,12 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
       pendingQueue.foreach(operation => self ! operation)
       pendingQueue = Queue.empty[Operation]
       log.debug("awaitReplicated: Replicated: become leader by popping")
+      context.unbecome()
+
+    case msg @ Replica.PersistFailed(id: Long) =>
+      log.debug("awaitReplicated: PersistFailed: msg = {}", msg)
+      client ! OperationFailed(id)
+      log.debug("awaitReplicated: PersistFailed: popping context")
       context.unbecome()
 
   } // awaitReplicated()
@@ -182,12 +192,20 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
       val persistMessage = Persist(key, value, seq)
       persistence ! persistMessage
       context.setReceiveTimeout(PersistenceTimeout)
-      log.debug("replica: Snapshot: pushed secondaryAwaitPersisted({}, {})", sender(), persistMessage)
-      context.become(secondaryAwaitPersisted(sender(), persistMessage), discardOld = false)
+      log.debug("replica: Snapshot: pushed secondaryAwaitPersisted({}, {}, {})",
+        sender(), persistMessage, MaxTimeUntilPersistFailed)
+      context.become(secondaryAwaitPersisted(sender(),
+        persistMessage, MaxTimeUntilPersistFailed), discardOld = false)
+
+    case msg @ Replica.PersistFailed(id: Long) =>
+      log.debug("replica: PersistFailed: msg = {} forwarding to {}", msg, sender())
+      sender() ! OperationFailed(id)
 
   }  // secondary Receive handler
 
-  def secondaryAwaitPersisted(snapshotRequester: ActorRef, persistMessage: Persist): Receive = LoggingReceive {
+  def secondaryAwaitPersisted(snapshotRequester: ActorRef,
+                              persistMessage: Persist,
+                              persistTimeRemaining: FiniteDuration): Receive = LoggingReceive {
     case msg @ Get(key: String, id: Long) =>
       log.debug("secondaryAwaitPersisted: Get: msg = {}", msg)
       sender() ! GetResult(key, kv.get(key), id)
@@ -217,9 +235,21 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
       context.unbecome()
       log.debug("secondaryAwaitPersisted: Persisted: popped context stack")
 
-    case ReceiveTimeout =>
-      log.debug("secondaryAwaitPersisted: ReceiveTimeout: resend {}", persistMessage)
+    case ReceiveTimeout if persistTimeRemaining > 0.milliseconds =>
+      log.debug("secondaryAwaitPersisted: ReceiveTimeout with {} remaining: resend {}",
+        persistTimeRemaining, persistMessage)
       persistence ! persistMessage
+      context.become(secondaryAwaitPersisted(snapshotRequester, persistMessage,
+        persistTimeRemaining - PersistenceTimeout))  // in this case, DO NOT PUSH context.
+
+    case ReceiveTimeout if persistTimeRemaining <= 0.milliseconds =>
+      log.debug("secondaryAwaitPersisted: ReceiveTimeout no time left")
+      snapshotRequester ! Replicator.PersistFailed(persistMessage)
+      context.unbecome()
+
+    case msg @ Replica.PersistFailed(id: Long) =>
+      self ! Replica.PersistFailed(id)
+      context.unbecome()
   }
 
   // Leave this at the bottom to make sure it always happens last.
