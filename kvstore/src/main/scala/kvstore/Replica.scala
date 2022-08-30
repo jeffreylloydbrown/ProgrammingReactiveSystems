@@ -22,8 +22,6 @@ object Replica {
   case class OperationFailed(id: Long) extends OperationReply
   case class GetResult(key: String, valueOption: Option[String], id: Long) extends OperationReply
 
-  case class PersistFailed(id: Long)
-
   def props(arbiter: ActorRef, persistenceProps: Props): Props = Props(new Replica(arbiter, persistenceProps))
 
   private val PersistenceTimeout = 95.milliseconds
@@ -95,14 +93,14 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
       log.debug("leader: Insert: replicators = {}", replicators)
       kv += key -> value
       replicators.foreach(_ ! Replicate(key, Some(value), id))
-      log.debug("leader: Insert: pushed awaitReplicated({})", sender())
-      context.become(awaitReplicated(sender()), discardOld = false)
+      log.debug("leader: Insert: pushed awaitReplicated({}, {})", sender(), replicators)
+      context.become(awaitReplicated(sender(), replicators), discardOld = false)
 
     case Remove(key: String, id: Long) =>
       kv -= key
       replicators.foreach(_ ! Replicate(key, None, id))
-      log.debug("leader: Remove: pushed awaitReplicated({})", sender())
-      context.become(awaitReplicated(sender()), discardOld = false)
+      log.debug("leader: Remove: pushed awaitReplicated({}, {})", sender(), replicators)
+      context.become(awaitReplicated(sender(), replicators), discardOld = false)
 
     case Get(key: String, id: Long) =>
       sender() ! GetResult(key, kv.get(key), id)
@@ -116,7 +114,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
 
   var pendingQueue: Queue[Operation] = Queue.empty[Operation]
 
-  private def awaitReplicated(client: ActorRef): Receive = LoggingReceive {
+  private def awaitReplicated(client: ActorRef, waitingOn: Set[ActorRef]): Receive = LoggingReceive {
     case msg @ Get(key: String, id: Long) =>
       log.debug("awaitReplicated: Get: msg = {}", msg)
       sender() ! GetResult(key, kv.get(key), id)
@@ -150,17 +148,24 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
         MaxTimeUntilPersistFailed), discardOld = false)
 
     case msg @ Replicated(_, id: Long) =>
-      log.debug("awaitReplicated: Replicated: msg = {}, send OperationAck", msg)
-      client ! OperationAck(id)
-      pendingQueue.foreach(operation => self ! operation)
-      pendingQueue = Queue.empty[Operation]
-      log.debug("awaitReplicated: Replicated: become leader by popping")
-      context.unbecome()
+      val stillWaitingOn = waitingOn - sender()
+      log.debug("awaitReplicated: Replicated: msg = {}, stillWaitingOn = {}",
+        msg, stillWaitingOn)
+      if (stillWaitingOn.isEmpty) {
+        client ! OperationAck(id)
+        pendingQueue.foreach(operation => self ! operation)
+        pendingQueue = Queue.empty[Operation]
+        log.debug("awaitReplicated: Replicated: complete, become leader by popping")
+        context.unbecome()
+      } else {
+        log.debug("awaitReplicated: Replicated: not finished, REPLACE context with stillWaitingOn")
+        context.become(awaitReplicated(client, stillWaitingOn))  // DON'T pop here.
+      }
 
-    case msg @ Replica.PersistFailed(id: Long) =>
-      log.debug("awaitReplicated: PersistFailed: msg = {}", msg)
+    case msg @ OperationFailed(id: Long) =>
+      log.debug("awaitReplicated: OperationFailed: msg = {}", msg)
       client ! OperationFailed(id)
-      log.debug("awaitReplicated: PersistFailed: popping context")
+      log.debug("awaitReplicated: OperationFailed: popping context")
       context.unbecome()
 
   } // awaitReplicated()
@@ -197,8 +202,8 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
       context.become(secondaryAwaitPersisted(sender(),
         persistMessage, MaxTimeUntilPersistFailed), discardOld = false)
 
-    case msg @ Replica.PersistFailed(id: Long) =>
-      log.debug("replica: PersistFailed: msg = {} forwarding to {}", msg, sender())
+    case msg @ OperationFailed(id: Long) =>
+      log.debug("replica: OperationFailed: msg = {} forwarding to {}", msg, sender())
       sender() ! OperationFailed(id)
 
   }  // secondary Receive handler
@@ -247,8 +252,9 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
       snapshotRequester ! Replicator.PersistFailed(persistMessage)
       context.unbecome()
 
-    case msg @ Replica.PersistFailed(id: Long) =>
-      self ! Replica.PersistFailed(id)
+    case OperationFailed(id: Long) =>
+      log.debug("secondaryAwaitPersisted: OperationFailed id = {}", id)
+      self ! OperationFailed(id)  // forward the message to the enclosing context.
       context.unbecome()
   }
 

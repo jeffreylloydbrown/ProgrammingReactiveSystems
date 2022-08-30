@@ -3,6 +3,7 @@ package kvstore
 import akka.actor.{Actor, ActorLogging, ActorRef, Props, ReceiveTimeout}
 import akka.event.LoggingReceive
 import kvstore.Persistence.Persist
+import kvstore.Replica.OperationFailed
 
 import scala.concurrent.duration._
 
@@ -18,6 +19,7 @@ object Replicator {
   def props(replica: ActorRef): Props = Props(new Replicator(replica))
 
   private val SnapshotTimeout = 100.milliseconds
+  private val MaxTimeUntilOperationFailed: FiniteDuration = 1000.milliseconds
 } // object Replicator
 
 class Replicator(val replica: ActorRef) extends Actor with ActorLogging {
@@ -41,8 +43,9 @@ class Replicator(val replica: ActorRef) extends Actor with ActorLogging {
   private def resetTimeout(): Unit =
     if (awaitingSnapshotAcks.isEmpty) context.setReceiveTimeout(Duration.Undefined)
 
+  def receive: Receive = normal(MaxTimeUntilOperationFailed)
 
-  def receive: Receive = LoggingReceive {
+  def normal(timeLeftUntilFailure: FiniteDuration): Receive = LoggingReceive {
     case request @ Replicate(key: String, value: Option[String], _: Long) =>
       log.debug("Replicator receive: Replicate: request = {}", request)
       val mySeqNumber = nextSeq()
@@ -71,7 +74,7 @@ class Replicator(val replica: ActorRef) extends Actor with ActorLogging {
       log.debug("Replicator receive: PersistFailed: map to client ID msg = {}", msg)
       awaitingSnapshotAcks.get(persistMessage.id).foreach {
         case (theSender: ActorRef, replicate: Replicate) =>
-          theSender ! Replica.PersistFailed(replicate.id)
+          theSender ! OperationFailed(replicate.id)
       }
 
   } // Replicator Receive handler
