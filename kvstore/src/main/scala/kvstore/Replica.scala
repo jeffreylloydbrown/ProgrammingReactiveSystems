@@ -26,7 +26,7 @@ object Replica {
 
   def props(arbiter: ActorRef, persistenceProps: Props): Props = Props(new Replica(arbiter, persistenceProps))
 
-  private val PersistenceTimeout = 100.milliseconds
+  private val PersistenceTimeout = 95.milliseconds
   private val MaxTimeUntilPersistFailed: FiniteDuration = 1000.milliseconds
 } // object Replica
 
