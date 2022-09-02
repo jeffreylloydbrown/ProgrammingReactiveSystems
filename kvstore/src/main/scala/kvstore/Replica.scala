@@ -24,8 +24,9 @@ object Replica {
 
   def props(arbiter: ActorRef, persistenceProps: Props): Props = Props(new Replica(arbiter, persistenceProps))
 
-  private val PersistenceTimeout = 95.milliseconds
-  private val MaxTimeUntilPersistFailed: FiniteDuration = 1000.milliseconds
+  val SingleOperationTimeout: FiniteDuration = 95.milliseconds
+  val MaxTimeUntilOperationFailed: FiniteDuration = 1000.milliseconds
+
 } // object Replica
 
 class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with ActorLogging {
@@ -142,10 +143,10 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
       }
       val persistMessage = Persist(key, value, seq)
       persistence ! persistMessage
-      context.setReceiveTimeout(PersistenceTimeout)
+      context.setReceiveTimeout(SingleOperationTimeout)
       log.debug("awaitReplicated: Snapshot: pushed secondaryAwaitPersisted({}, {})",sender(), persistMessage)
       context.become(secondaryAwaitPersisted(sender(), persistMessage,
-        MaxTimeUntilPersistFailed), discardOld = false)
+        MaxTimeUntilOperationFailed), discardOld = false)
 
     case msg @ Replicated(_, id: Long) =>
       val stillWaitingOn = waitingOn - sender()
@@ -196,11 +197,11 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
       }
       val persistMessage = Persist(key, value, seq)
       persistence ! persistMessage
-      context.setReceiveTimeout(PersistenceTimeout)
+      context.setReceiveTimeout(SingleOperationTimeout)
       log.debug("replica: Snapshot: pushed secondaryAwaitPersisted({}, {}, {})",
-        sender(), persistMessage, MaxTimeUntilPersistFailed)
+        sender(), persistMessage, MaxTimeUntilOperationFailed)
       context.become(secondaryAwaitPersisted(sender(),
-        persistMessage, MaxTimeUntilPersistFailed), discardOld = false)
+        persistMessage, MaxTimeUntilOperationFailed), discardOld = false)
 
     case msg @ OperationFailed(id: Long) =>
       log.debug("replica: OperationFailed: msg = {} forwarding to {}", msg, sender())
@@ -245,7 +246,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
         persistTimeRemaining, persistMessage)
       persistence ! persistMessage
       context.become(secondaryAwaitPersisted(snapshotRequester, persistMessage,
-        persistTimeRemaining - PersistenceTimeout))  // in this case, DO NOT PUSH context.
+        persistTimeRemaining - SingleOperationTimeout))  // in this case, DO NOT PUSH context.
 
     case ReceiveTimeout if persistTimeRemaining <= 0.milliseconds =>
       log.debug("secondaryAwaitPersisted: ReceiveTimeout no time left")
