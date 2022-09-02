@@ -18,7 +18,7 @@ object Replicator {
 
   def props(replica: ActorRef): Props = Props(new Replicator(replica))
 
-  private val SnapshotTimeout = 100.milliseconds
+  private val SnapshotTimeout = 95.milliseconds
   private val MaxTimeUntilOperationFailed: FiniteDuration = 1000.milliseconds
 } // object Replicator
 
@@ -47,14 +47,14 @@ class Replicator(val replica: ActorRef) extends Actor with ActorLogging {
 
   def normal(timeLeftUntilFailure: FiniteDuration): Receive = LoggingReceive {
     case request @ Replicate(key: String, value: Option[String], _: Long) =>
-      log.debug("Replicator receive: Replicate: request = {}", request)
+      log.debug("Replicator normal: Replicate: request = {}", request)
       val mySeqNumber = nextSeq()
       awaitingSnapshotAcks += (mySeqNumber -> (sender(), request))
       replica ! Snapshot(key, value, mySeqNumber)
       setTimeout()
 
     case request @ SnapshotAck(_, seq: Long) =>
-      log.debug("Replicator receive: SnapshotAck: request = {}", request)
+      log.debug("Replicator normal: SnapshotAck: request = {}", request)
       awaitingSnapshotAcks.get(seq).foreach {
         case (theSender: ActorRef, replicate: Replicate) =>
           theSender ! Replicated(replicate.key, replicate.id)
@@ -62,16 +62,32 @@ class Replicator(val replica: ActorRef) extends Actor with ActorLogging {
       awaitingSnapshotAcks -= seq
       resetTimeout()
 
-    case ReceiveTimeout =>
-      log.debug("Replicator receive: ReceiveTimeout: resend Snapshot for {}", awaitingSnapshotAcks)
+    case ReceiveTimeout if timeLeftUntilFailure > 0.milliseconds =>
+      log.debug("Replicator normal: ReceiveTimeout: {} remaining, resend Snapshot for {}",
+        timeLeftUntilFailure, awaitingSnapshotAcks)
       awaitingSnapshotAcks.foreach {
         case (seqNumber, (_, request)) =>
           replica ! Snapshot(request.key, request.valueOption, seqNumber)
       }
       resetTimeout()
+      // in this case, DO NOT PUSH context.
+      context.become(normal(timeLeftUntilFailure - SnapshotTimeout))
+
+    case ReceiveTimeout if timeLeftUntilFailure <= 0.milliseconds =>
+      log.debug("Replicator normal: ReceiveTimeout no time left")
+      // TODO is failing ALL of them really correct?  Testing will tell....
+      awaitingSnapshotAcks.foreach {
+        case (seqNumber, (theSender, request)) =>
+          log.debug("Replicator normal: ReceiveTimeout no time left: seq {}: send OperationFailed({}) to {}",
+            seqNumber, request.id, theSender)
+          theSender ! OperationFailed(request.id)
+      }
+      awaitingSnapshotAcks = Map.empty[Long, (ActorRef, Replicate)]
+      resetTimeout()
+      context.become(receive)
 
     case msg @ PersistFailed(persistMessage: Persist) =>
-      log.debug("Replicator receive: PersistFailed: map to client ID msg = {}", msg)
+      log.debug("Replicator normal: PersistFailed: map to client ID msg = {}", msg)
       awaitingSnapshotAcks.get(persistMessage.id).foreach {
         case (theSender: ActorRef, replicate: Replicate) =>
           theSender ! OperationFailed(replicate.id)
