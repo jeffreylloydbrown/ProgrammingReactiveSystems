@@ -3,7 +3,7 @@ package kvstore
 import akka.actor.{Actor, ActorLogging, ActorRef, Props, ReceiveTimeout}
 import akka.event.LoggingReceive
 import kvstore.Persistence.Persist
-import kvstore.Replica.OperationFailed
+import kvstore.Replica.{MaxTimeUntilOperationFailed, OperationFailed, SingleOperationTimeout}
 
 import scala.concurrent.duration._
 
@@ -18,8 +18,6 @@ object Replicator {
 
   def props(replica: ActorRef): Props = Props(new Replicator(replica))
 
-  private val SnapshotTimeout = 95.milliseconds
-  private val MaxTimeUntilOperationFailed: FiniteDuration = 1000.milliseconds
 } // object Replicator
 
 class Replicator(val replica: ActorRef) extends Actor with ActorLogging {
@@ -39,7 +37,7 @@ class Replicator(val replica: ActorRef) extends Actor with ActorLogging {
   // what we do depends on us waiting on SnapshotAcks to come back.  If there are none, then we don't need the
   // timeout anymore and we turn it off.  If there are SnapshotAcks still left to come, we keep the timeout in
   // place.  Since the timeout continues until deactivated, we do nothing if there are still SnapshotAcks coming.
-  private def setTimeout(): Unit = context.setReceiveTimeout(SnapshotTimeout)
+  private def setTimeout(): Unit = context.setReceiveTimeout(SingleOperationTimeout)
   private def resetTimeout(): Unit =
     if (awaitingSnapshotAcks.isEmpty) context.setReceiveTimeout(Duration.Undefined)
 
@@ -71,7 +69,7 @@ class Replicator(val replica: ActorRef) extends Actor with ActorLogging {
       }
       resetTimeout()
       // in this case, DO NOT PUSH context.
-      context.become(normal(timeLeftUntilFailure - SnapshotTimeout))
+      context.become(normal(timeLeftUntilFailure - SingleOperationTimeout))
 
     case ReceiveTimeout if timeLeftUntilFailure <= 0.milliseconds =>
       log.debug("Replicator normal: ReceiveTimeout no time left")
