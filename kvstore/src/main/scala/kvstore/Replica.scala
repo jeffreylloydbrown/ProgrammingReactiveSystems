@@ -73,9 +73,27 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
       sender() ! OperationAck(id)
   }
 
+  private var expectedSeqId = 0L
+
+  private val Snapshots: Receive = LoggingReceive {
+    case Snapshot(key: String, _: Option[String], seq: Long) if seq < expectedSeqId =>
+      // Already seen it, immediately acknowledge
+      sender() ! SnapshotAck(key, seq)
+    case Snapshot(_: String, _: Option[String], seq: Long) if seq > expectedSeqId =>
+      // Ignore it, force Replicator to send it again once we've caught up.
+      ()
+    case Snapshot(key: String, value: Option[String], seq: Long) =>
+      value match {
+        case Some(v) => kv += key->v
+        case None => kv -= key
+      }
+      sender() ! SnapshotAck(key, seq)
+      expectedSeqId = seq + 1
+  }
+
   // Here is where Chain of Responsibility comes in handy!
   private val leader: Receive = Gets orElse Updates
-  private val replica: Receive = Gets
+  private val replica: Receive = Gets orElse Snapshots
 
   // leave this at the absolute bottom so it happens last
   arbiter ! Join
