@@ -1,8 +1,23 @@
+// Originally I used the state stack with becomes(), and ran into intermittent trouble
+// with where the popped state returned.  Rather than continue trying to solve that, I decided
+// to start over with all the data management in member variables, so there is almost no context
+// switching here.
+//
+// It also bothered me greatly at how large the Receive handlers became for this assignment.  As
+// I was trying to think of a better way, I remembered that Receive handlers are partial functions,
+// and that one way to implement Chain of Responsibility in Scala is with a sequence of partial
+// functions.  The various links in the chain are connected with orElse.  This lets me define
+// separate Receive handlers for larger-grained operations, and mix and match them to implement
+// the leader and secondary handlers.  I rather like how this separates the cases into highly-related
+// items, and lets one focus on just those cases instead of these gigantic Receive partial functions.
+
 package kvstore
 
-import akka.actor.{ OneForOneStrategy, PoisonPill, Props, SupervisorStrategy, Terminated, ActorRef, Actor }
+import akka.actor.{Actor, ActorRef, OneForOneStrategy, PoisonPill, Props, SupervisorStrategy, Terminated}
+import akka.event.LoggingReceive
 import kvstore.Arbiter._
-import akka.pattern.{ ask, pipe }
+import akka.pattern.{ask, pipe}
+
 import scala.concurrent.duration._
 import akka.util.Timeout
 
@@ -39,21 +54,30 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   // the current set of replicators
   var replicators = Set.empty[ActorRef]
 
-
-  def receive = {
+  def receive: Receive = LoggingReceive {
     case JoinedPrimary   => context.become(leader)
     case JoinedSecondary => context.become(replica)
   }
 
-  /* TODO Behavior for  the leader role. */
-  val leader: Receive = {
-    case _ =>
+  private val Gets: Receive = LoggingReceive {
+    case Get(key: String, id: Long) =>
+      sender() ! GetResult(key, kv.get(key), id)
   }
 
-  /* TODO Behavior for the replica role. */
-  val replica: Receive = {
-    case _ =>
+  private val Updates: Receive = LoggingReceive {
+    case Insert(key: String, value: String, id: Long) =>
+      kv += key->value
+      sender() ! OperationAck(id)
+    case Remove(key: String, id: Long) =>
+      kv -= key
+      sender() ! OperationAck(id)
   }
 
+  // Here is where Chain of Responsibility comes in handy!
+  private val leader: Receive = Gets orElse Updates
+  private val replica: Receive = Gets
+
+  // leave this at the absolute bottom so it happens last
+  arbiter ! Join
 }
 
