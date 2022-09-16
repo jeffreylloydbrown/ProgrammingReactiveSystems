@@ -1,19 +1,17 @@
 package kvstore
 
 import akka.testkit.TestProbe
-
-import scala.concurrent.duration._
 import kvstore.Arbiter.{Join, JoinedSecondary}
 
-import scala.util.Random
-import scala.util.control.NonFatal
+import scala.concurrent.duration._
 
 trait Step2_SecondarySpec { this: KVStoreSuite =>
 
   test("Step2-case1: Secondary (in isolation) should properly register itself to the provided Arbiter") {
-    val arbiter = TestProbe()
-        system.actorOf(Replica.props(arbiter.ref, Persistence.props(flaky = false)), "step2-case1-secondary")
-    
+    val arbiter = TestProbe("arbiter")
+    system.actorOf(Replica.props(arbiter.ref, Persistence.props(flaky = false)),
+      "step2-case1-secondary")
+
     arbiter.expectMsg(Join)
     ()
   }
@@ -21,10 +19,11 @@ trait Step2_SecondarySpec { this: KVStoreSuite =>
   test("Step2-case2: Secondary (in isolation) must handle Snapshots") {
     import Replicator._
 
-    val arbiter = TestProbe()
-    val replicator = TestProbe()
-        val secondary = system.actorOf(Replica.props(arbiter.ref, Persistence.props(flaky = false)), "step2-case2-secondary")
-        val client = session(secondary)
+    val arbiter = TestProbe("arbiter")
+    val replicator = TestProbe("replicator")
+    val secondary = system.actorOf(Replica.props(arbiter.ref,
+      Persistence.props(flaky = false)), "step2-case2-secondary")
+    val client = session(secondary)
 
     arbiter.expectMsg(Join)
     arbiter.send(secondary, JoinedSecondary)
@@ -47,10 +46,11 @@ trait Step2_SecondarySpec { this: KVStoreSuite =>
   test("Step2-case3: Secondary should drop and immediately ack snapshots with older sequence numbers") {
     import Replicator._
 
-    val arbiter = TestProbe()
-    val replicator = TestProbe()
-        val secondary = system.actorOf(Replica.props(arbiter.ref, Persistence.props(flaky = false)), "step2-case3-secondary")
-        val client = session(secondary)
+    val arbiter = TestProbe("arbiter")
+    val replicator = TestProbe("replicator")
+    val secondary = system.actorOf(Replica.props(arbiter.ref,
+      Persistence.props(flaky = false)), "step2-case3-secondary")
+    val client = session(secondary)
 
     arbiter.expectMsg(Join)
     arbiter.send(secondary, JoinedSecondary)
@@ -77,10 +77,11 @@ trait Step2_SecondarySpec { this: KVStoreSuite =>
   test("Step2-case4: Secondary should drop snapshots with future sequence numbers") {
     import Replicator._
 
-    val arbiter = TestProbe()
-    val replicator = TestProbe()
-        val secondary = system.actorOf(Replica.props(arbiter.ref, Persistence.props(flaky = false)), "step2-case4-secondary")
-        val client = session(secondary)
+    val arbiter = TestProbe("arbiter")
+    val replicator = TestProbe("arbiter")
+    val secondary = system.actorOf(Replica.props(arbiter.ref,
+      Persistence.props(flaky = false)), "step2-case4-secondary")
+    val client = session(secondary)
 
     arbiter.expectMsg(Join)
     arbiter.send(secondary, JoinedSecondary)
@@ -96,5 +97,5 @@ trait Step2_SecondarySpec { this: KVStoreSuite =>
     assertEquals(client.get("k1"), Some("v2"))
   }
 
-  
+
 }
