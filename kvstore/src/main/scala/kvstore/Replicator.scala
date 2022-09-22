@@ -1,8 +1,8 @@
 package kvstore
 
-import akka.actor.Props
-import akka.actor.Actor
-import akka.actor.ActorRef
+import akka.actor.{Actor, ActorLogging, ActorRef, Props, Terminated}
+import akka.event.LoggingReceive
+
 import scala.concurrent.duration._
 
 object Replicator {
@@ -15,7 +15,7 @@ object Replicator {
   def props(replica: ActorRef): Props = Props(new Replicator(replica))
 }
 
-class Replicator(val replica: ActorRef) extends Actor {
+class Replicator(val replica: ActorRef) extends Actor with ActorLogging {
   import Replicator._
   import context.dispatcher
   
@@ -24,21 +24,36 @@ class Replicator(val replica: ActorRef) extends Actor {
    */
 
   // map from sequence number to pair of sender and request
-  var acks = Map.empty[Long, (ActorRef, Replicate)]
+  var awaitingSnapshotAcks = Map.empty[Long, (ActorRef, Replicate)]
   // a sequence of not-yet-sent snapshots (you can disregard this if not implementing batching)
   var pending = Vector.empty[Snapshot]
-  
-  var _seqCounter = 0L
-  def nextSeq() = {
-    val ret = _seqCounter
-    _seqCounter += 1
-    ret
+
+  private val sequenceGenerator = new LongGenerator()
+
+
+  private def Replication: Receive = LoggingReceive {
+    case request @ Replicate(key, valueOption, _) =>
+      val seq = sequenceGenerator.next()
+      awaitingSnapshotAcks +=   seq -> (sender(), request)
+      replica ! Snapshot(key, valueOption, seq)
+
+    case SnapshotAck(_, seq) =>
+      awaitingSnapshotAcks.get(seq).foreach {
+        case (originator, replicate) =>
+          originator ! Replicated(replicate.key, replicate.id)
+      }
+      awaitingSnapshotAcks -= seq // don't modify the container INSIDE the loop processing it!
+
   }
 
-  
-  /* TODO Behavior for the Replicator. */
-  def receive: Receive = {
-    case _ =>
+  // If the replica goes away, so do we.
+  private def ReplicaTerminated: Receive = LoggingReceive {
+    case Terminated(`replica`) =>
+      context.stop(self)
   }
+  context.watch(replica)
+
+
+  def receive: Receive = Replication orElse ReplicaTerminated
 
 }
