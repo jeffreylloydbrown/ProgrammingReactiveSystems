@@ -8,30 +8,25 @@ import scala.concurrent.duration._
 object Replicator {
   case class Replicate(key: String, valueOption: Option[String], id: Long)
   case class Replicated(key: String, id: Long)
-  
+
   case class Snapshot(key: String, valueOption: Option[String], seq: Long)
   case class SnapshotAck(key: String, seq: Long)
+  private case object ResendSnapshots
 
   def props(replica: ActorRef): Props = Props(new Replicator(replica))
-}
+} // object Replicator
 
 class Replicator(val replica: ActorRef) extends Actor with ActorLogging {
   import Replicator._
   import context.dispatcher
-  
-  /*
-   * The contents of this actor is just a suggestion, you can implement it in any way you like.
-   */
 
-  // map from sequence number to pair of sender and request
+  // map from sequence number to pair of originator and request
   var awaitingSnapshotAcks = Map.empty[Long, (ActorRef, Replicate)]
-  // a sequence of not-yet-sent snapshots (you can disregard this if not implementing batching)
-  var pending = Vector.empty[Snapshot]
 
   private val sequenceGenerator = new LongGenerator()
 
 
-  private def Replication: Receive = LoggingReceive {
+  def receive: Receive = LoggingReceive {
     case request @ Replicate(key, valueOption, _) =>
       val seq = sequenceGenerator.next()
       awaitingSnapshotAcks +=   seq -> (sender(), request)
@@ -44,16 +39,21 @@ class Replicator(val replica: ActorRef) extends Actor with ActorLogging {
       }
       awaitingSnapshotAcks -= seq // don't modify the container INSIDE the loop processing it!
 
-  }
+    case ResendSnapshots =>
+      awaitingSnapshotAcks.foreach {
+        case (seq, (_, replicate)) =>
+          replica ! Snapshot(replicate.key, replicate.valueOption, seq)
+      }
 
-  // If the replica goes away, so do we.
-  private def ReplicaTerminated: Receive = LoggingReceive {
     case Terminated(`replica`) =>
       context.stop(self)
   }
+
+  // If the replica goes away, so do we.
   context.watch(replica)
 
+  // Assignment says to retry snapshots every 100 ms
+  context.system.scheduler.scheduleAtFixedRate(0.milliseconds, 100.milliseconds,
+    self, ResendSnapshots)
 
-  def receive: Receive = Replication orElse ReplicaTerminated
-
-}
+} // class Replicator
