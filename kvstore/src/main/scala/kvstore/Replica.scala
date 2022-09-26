@@ -17,13 +17,11 @@
 
 package kvstore
 
-import akka.actor.{Actor, ActorRef, OneForOneStrategy, PoisonPill, Props, SupervisorStrategy, Terminated}
+import akka.actor.{Actor, ActorRef, OneForOneStrategy, Props, SupervisorStrategy, Terminated}
 import akka.event.LoggingReceive
 import kvstore.Arbiter._
-import akka.pattern.{ask, pipe}
 
 import scala.concurrent.duration._
-import akka.util.Timeout
 
 object Replica {
   sealed trait Operation {
@@ -42,6 +40,7 @@ object Replica {
   def props(arbiter: ActorRef, persistenceProps: Props): Props = Props(new Replica(arbiter, persistenceProps))
 }
 
+//noinspection ActorMutableStateInspection
 class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   import Replica._
   import Replicator._
@@ -69,8 +68,6 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   private var kv = Map.empty[String, String]
   // a map from secondary replicas to replicators
   private var secondaries = Map.empty[ActorRef, ActorRef]
-  // the current set of replicators
-  private var replicators = Set.empty[ActorRef]
 
   private case class PendingOperation(notifyWhenDone: ActorRef,
                                       messageIfSucceeded: Option[Any],
