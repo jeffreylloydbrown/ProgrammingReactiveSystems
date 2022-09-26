@@ -116,10 +116,13 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   }
 
   private case class PendingPersist(notifyWhenDone: ActorRef, message: Persist)
+  private case object SendPendingPersists
   private var pendingPersists = Map.empty[Long, PendingPersist]
   private def addPendingPersist(notifyWhenDone: ActorRef, seq: Long, persist: Persist): Unit = {
     pendingPersists +=    seq -> PendingPersist(notifyWhenDone, persist)
     persistence ! persist
+    context.system.scheduler.scheduleAtFixedRate(0.milliseconds, 100.milliseconds,
+      self, SendPendingPersists)
   }
   private def removePendingPersist(seq: Long): Unit = { pendingPersists -= seq }
 
@@ -177,14 +180,12 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
       expectedSeqId = seq + 1
   }
 
-  private case object SendPendingPersists
-
   private val Persists: Receive = LoggingReceive {
     case Persisted(_, seq) =>
       removePendingPersist(seq)
       tryToFinishOperation(seq)
     case SendPendingPersists =>
-      pendingPersists.foreach { case (_, persist) => persistence ! persist }
+      pendingPersists.foreach { case (_, pendingPersist) => persistence ! pendingPersist.message }
     case Terminated(actor) if actor == persistence =>
       persistence = createPersistence
       self ! SendPendingPersists
