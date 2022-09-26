@@ -192,7 +192,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   }
 
   // Here is where Chain of Responsibility comes in handy!
-  private val leader: Receive = Gets orElse Updates
+  private val leader: Receive = Gets orElse Updates orElse Persists
   private val replica: Receive = Gets orElse Snapshots orElse Persists
 
   // leave this at the absolute bottom so it happens last

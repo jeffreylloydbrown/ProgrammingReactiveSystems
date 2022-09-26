@@ -37,7 +37,7 @@ trait Step4_SecondaryPersistenceSpec { this: KVStoreSuite =>
     assertEquals(client.get("k1"), Some("v1"))
   }
 
-  test("Step4-case2: Secondary should retry persistence in every 100 milliseconds".ignore) {
+  test("Step4-case2: Secondary should retry persistence in every 100 milliseconds") {
     import Replicator._
 
     val arbiter = TestProbe("arbiter")
