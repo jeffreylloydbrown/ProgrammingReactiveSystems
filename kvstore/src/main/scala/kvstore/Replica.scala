@@ -217,6 +217,12 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
   }
   private def removeSecondary(secondary: ActorRef): Unit = {
     secondaries.get(secondary).foreach { replicator =>
+      pendingPersists
+        .filter { case (_, pendingPersist) => pendingPersist.notifyWhenDone == secondary}
+        .foreach { case (seq, pendingPersist) =>
+          removePendingPersist(seq)
+          tryToFinishOperation(pendingPersist.message.id)
+        }
       pendingReplicates
         .filter { case (_, pendingReplicate) => pendingReplicate.stillWaitingOn.contains(replicator) }
         .foreach { case (id, _) =>
@@ -224,6 +230,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
           tryToFinishOperation(id)
         }
       context.stop(secondary)  // The replicator will see secondary stopped and stop itself via DeathWatch.
+      secondaries -= secondary
     }
   }
 
