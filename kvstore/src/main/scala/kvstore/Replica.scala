@@ -14,6 +14,11 @@
 // that aren't covered by the first group of partial functions.  The important thing is to see that
 // eventually the message with the particular id/seq number is handled, and not let those log entries
 // bother you.
+//
+// Note about scheduled messages:  I'm not cancelling scheduled messages (e.g. SendPendingPersists, TimedOut)
+// if they are no longer needed.  That leads to dead-letter logs from those messages sometimes, because I didn't
+// go to the extra work to cancel them when the Actor got stopped.  It doesn't affect the assignment, just
+// distracting in the logs when debug stuff is turned on.
 
 package kvstore
 
