@@ -53,7 +53,7 @@ class Replicator(val replica: ActorRef) extends Actor with ActorLogging {
   context.watch(replica)
 
   // Assignment says to retry snapshots every 100 ms
-  context.system.scheduler.scheduleAtFixedRate(0.milliseconds, 100.milliseconds,
+  context.system.scheduler.scheduleAtFixedRate(100.milliseconds, 100.milliseconds,
     self, ResendSnapshots)
 
 } // class Replicator
