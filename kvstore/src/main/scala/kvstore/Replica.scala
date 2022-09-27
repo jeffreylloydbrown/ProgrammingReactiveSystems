@@ -17,7 +17,7 @@
 
 package kvstore
 
-import akka.actor.{Actor, ActorRef, OneForOneStrategy, Props, SupervisorStrategy, Terminated}
+import akka.actor.{Actor, ActorLogging, ActorRef, OneForOneStrategy, Props, SupervisorStrategy, Terminated}
 import akka.event.LoggingReceive
 import kvstore.Arbiter._
 
@@ -41,7 +41,7 @@ object Replica {
 }
 
 //noinspection ActorMutableStateInspection
-class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
+class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with ActorLogging {
   import Replica._
   import Replicator._
   import akka.actor.SupervisorStrategy._
@@ -60,6 +60,19 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   }
 
   private var persistence = createPersistence
+
+  private case class TimedOut(id: Long)
+  private def enableOperationTimeout(id: Long): Unit = {
+    context.system.scheduler.scheduleAtFixedRate(1.second, 1.second,
+      self, TimedOut(id))
+  }
+
+  private def TimeOuts: Receive = LoggingReceive {
+    case TimedOut(id: Long) =>
+      removePendingOperation(id)(_.messageIfFailed)
+      removePendingPersist(id)
+      pendingReplicates -= id // TODO how to use removePendingReplicate here?
+  }
 
   /*
    * The contents of this actor is just a suggestion, you can implement it in any way you like.
@@ -118,8 +131,6 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   private def addPendingPersist(notifyWhenDone: ActorRef, seq: Long, persist: Persist): Unit = {
     pendingPersists +=    seq -> PendingPersist(notifyWhenDone, persist)
     persistence ! persist
-    context.system.scheduler.scheduleAtFixedRate(0.milliseconds, 100.milliseconds,
-      self, SendPendingPersists)
   }
   private def removePendingPersist(seq: Long): Unit = { pendingPersists -= seq }
 
@@ -149,12 +160,14 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
         Some(OperationAck(id)), Some(OperationFailed(id)))
       addPendingReplicate(id, Replicate(key, Some(value), id))
       addPendingPersist(self, id, Persist(key, Some(value), id))
+      enableOperationTimeout(id)
     case Remove(key: String, id: Long) =>
       kv -= key
       addPendingOperation(id, sender(),
         Some(OperationAck(id)), Some(OperationFailed(id)))
       addPendingReplicate(id, Replicate(key, None, id))
       addPendingPersist(self, id, Persist(key, None, id))
+      enableOperationTimeout(id)
   }
 
   private var expectedSeqId = 0L
@@ -174,6 +187,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
       addPendingOperation(seq, sender(),
         Some(SnapshotAck(key, seq)), None)
       addPendingPersist(sender(), seq, Persist(key, value, seq))
+      enableOperationTimeout(seq)
       expectedSeqId = seq + 1
   }
 
@@ -189,8 +203,12 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor {
   }
 
   // Here is where Chain of Responsibility comes in handy!
-  private val leader: Receive = Gets orElse Updates orElse Persists
-  private val replica: Receive = Gets orElse Snapshots orElse Persists
+  private val leader: Receive = Gets orElse Updates orElse Persists orElse TimeOuts
+  private val replica: Receive = Gets orElse Snapshots orElse Persists orElse TimeOuts
+
+  // Resend any pending persists every 100 milliseconds, per homework.
+  context.system.scheduler.scheduleAtFixedRate(100.milliseconds, 100.milliseconds,
+    self, SendPendingPersists)
 
   // leave this at the absolute bottom so it happens last
   arbiter ! Join

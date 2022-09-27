@@ -52,7 +52,7 @@ trait Step5_PrimaryPersistenceSpec { this: KVStoreSuite =>
     client.waitAck(setId)
   }
 
-  test("Step5-case3: Primary generates failure after 1 second if persistence fails".ignore) {
+  test("Step5-case3: Primary generates failure after 1 second if persistence fails") {
     val arbiter = TestProbe("arbiter")
     val persistence = TestProbe("persistence")
     val primary = system.actorOf(Replica.props(arbiter.ref,
