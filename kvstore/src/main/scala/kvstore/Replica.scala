@@ -71,7 +71,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
     case TimedOut(id: Long) =>
       removePendingOperation(id)(_.messageIfFailed)
       removePendingPersist(id)
-      pendingReplicates -= id // TODO how to use removePendingReplicate here?
+      secondaries.get(self).foreach( replicator => removePendingReplicate(id, replicator) )
   }
 
   /*
@@ -169,13 +169,13 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
       enableOperationTimeout(id)
   }
 
-  private var expectedSeqId = 0L
+  private val expectedSeqId = new LongGenerator()
 
   private val Snapshots: Receive = LoggingReceive {
-    case Snapshot(key: String, _: Option[String], seq: Long) if seq < expectedSeqId =>
+    case Snapshot(key: String, _: Option[String], seq: Long) if seq < expectedSeqId.value =>
       // Already seen it, immediately acknowledge
       sender() ! SnapshotAck(key, seq)
-    case Snapshot(_: String, _: Option[String], seq: Long) if seq > expectedSeqId =>
+    case Snapshot(_: String, _: Option[String], seq: Long) if seq > expectedSeqId.value =>
       // Ignore it, force Replicator to send it again once we've caught up.
       ()
     case Snapshot(key: String, value: Option[String], seq: Long) =>
@@ -187,7 +187,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
         Some(SnapshotAck(key, seq)), None)
       addPendingPersist(sender(), seq, Persist(key, value, seq))
       enableOperationTimeout(seq)
-      expectedSeqId = seq + 1
+      expectedSeqId.next()
   }
 
   private val Persists: Receive = LoggingReceive {
@@ -210,6 +210,8 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
   private def addSecondary(secondary: ActorRef): Unit = {
     val replicator = context.system.actorOf(Replicator.props(secondary))
     secondaries +=    secondary -> replicator
+    // Need to "make up" id numbers to use with these new Replicate messages.  Values don't matter,
+    // so zipWithIndex is perfect here.
     kv.zipWithIndex.foreach {
       case ((key, value), id) =>
         replicator ! Replicate(key, Some(value), id)

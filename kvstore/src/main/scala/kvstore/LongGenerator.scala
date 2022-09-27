@@ -6,8 +6,10 @@ class LongGenerator(val startWith: Long = 0L) {
 
   def from(startWith: Long): this.type = { counter(0) = startWith; this }
 
+  def value: Long = counter.head
+
   def next(): Long = {
-    val ret = counter.head
+    val ret = value
     counter(0) += 1L
     ret
   }
