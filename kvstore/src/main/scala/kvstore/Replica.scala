@@ -99,9 +99,7 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
     pendingOperations -= id
   }
 
-  private case class PendingReplicate(message: Any, stillWaitingOn: Set[ActorRef]) {
-    def anActorFinished(actor: ActorRef): PendingReplicate = this.copy(stillWaitingOn = stillWaitingOn - actor)
-  }
+  private case class PendingReplicate(message: Any, stillWaitingOn: Set[ActorRef])
   private var pendingReplicates = Map.empty[Long, PendingReplicate]
   private def addPendingReplicate(id: Long, replicate: Replicate): Unit = {
     // Only do this if there are any secondaries, because Leader doesn't have a Replicator.
@@ -114,14 +112,15 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
   private def removePendingReplicate(id: Long, finished: ActorRef): Unit = {
     pendingReplicates
       .get(id)
-      .map { _.anActorFinished(finished) }  // stillWaitingOn becomes Set.empty if all done.
+      // remove `finished`, if stillWaitingOn becomes empty set, all pending replicates are done
+      .map { pr: PendingReplicate => pr.copy(stillWaitingOn = pr.stillWaitingOn - finished) }
       .foreach {
         case pr: PendingReplicate if pr.stillWaitingOn.isEmpty =>
           // all the replicators have finished so we are done replicating
-          pendingReplicates -= id
+          pendingReplicates = pendingReplicates.removed(id)
         case replicationNotAllFinished: PendingReplicate =>
           // we are still awaiting some replication acknowledgements, so update the state for this id.
-          pendingReplicates.updated(id, replicationNotAllFinished)
+          pendingReplicates = pendingReplicates.updated(id, replicationNotAllFinished)
       }
   }
 
@@ -202,8 +201,43 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
       self ! SendPendingPersists
   }
 
+  private val Replicates: Receive = LoggingReceive {
+    case Replicated(_, id) =>
+      removePendingReplicate(id, sender())
+      tryToFinishOperation(id)
+  }
+
+  private def addSecondary(secondary: ActorRef): Unit = {
+    val replicator = context.system.actorOf(Replicator.props(secondary))
+    secondaries +=    secondary -> replicator
+    kv.zipWithIndex.foreach {
+      case ((key, value), id) =>
+        replicator ! Replicate(key, Some(value), id)
+    }
+  }
+  private def removeSecondary(secondary: ActorRef): Unit = {
+    secondaries.get(secondary).foreach { replicator =>
+      pendingReplicates
+        .filter { case (_, pendingReplicate) => pendingReplicate.stillWaitingOn.contains(replicator) }
+        .foreach { case (id, _) =>
+          removePendingReplicate(id, replicator)
+          tryToFinishOperation(id)
+        }
+      context.stop(secondary)  // The replicator will see secondary stopped and stop itself via DeathWatch.
+    }
+  }
+
+  private val UpdateReplicas: Receive = LoggingReceive {
+    case Replicas(replicas) =>
+      val possibleSecondaries = replicas - self
+      val toBeRemoved = secondaries.keySet -- possibleSecondaries
+      toBeRemoved.foreach(removeSecondary)
+      val newSecondaries = possibleSecondaries -- secondaries.keySet
+      newSecondaries.foreach(addSecondary)
+  }
+
   // Here is where Chain of Responsibility comes in handy!
-  private val leader: Receive = Gets orElse Updates orElse Persists orElse TimeOuts
+  private val leader: Receive = Gets orElse Updates orElse Persists orElse Replicates orElse TimeOuts orElse UpdateReplicas
   private val replica: Receive = Gets orElse Snapshots orElse Persists orElse TimeOuts
 
   // Resend any pending persists every 100 milliseconds, per homework.
