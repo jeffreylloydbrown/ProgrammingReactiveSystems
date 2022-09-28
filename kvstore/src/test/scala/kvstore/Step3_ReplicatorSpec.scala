@@ -1,16 +1,17 @@
 package kvstore
 
 import akka.testkit.TestProbe
+import kvstore.Replicator.{Replicate, Snapshot, SnapshotAck}
 
 import scala.concurrent.duration._
-import kvstore.Replicator.{Replicate, Snapshot, SnapshotAck}
 
 trait Step3_ReplicatorSpec { this: KVStoreSuite =>
 
   test("Step3-case1: Replicator should send snapshots when asked to replicate") {
-    val probe = TestProbe()
-    val secondary = TestProbe()
-    val replicator = system.actorOf(Replicator.props(secondary.ref), "step3-case1-replicator")
+    val probe = TestProbe("probe")
+    val secondary = TestProbe("secondary")
+    val replicator = system.actorOf(Replicator.props(secondary.ref),
+      "step3-case1-replicator")
 
     probe.send(replicator, Replicate("k1", Some("v1"), 0L))
     expectAtLeastOneSnapshot(secondary)("k1", Some("v1"), 0L)
@@ -30,9 +31,10 @@ trait Step3_ReplicatorSpec { this: KVStoreSuite =>
   }
 
   test("Step3-case2: Replicator should retry until acknowledged by secondary") {
-    val probe = TestProbe()
-    val secondary = TestProbe()
-    val replicator = system.actorOf(Replicator.props(secondary.ref), "step3-case2-replicator")
+    val probe = TestProbe("probe")
+    val secondary = TestProbe("secondary")
+    val replicator = system.actorOf(Replicator.props(secondary.ref),
+      "step3-case2-replicator")
 
     probe.send(replicator, Replicate("k1", Some("v1"), 0L))
     secondary.expectMsg(Snapshot("k1", Some("v1"), 0L))
