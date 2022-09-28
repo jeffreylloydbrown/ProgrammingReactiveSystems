@@ -1,7 +1,14 @@
 // Originally I used the state stack with becomes(), and ran into intermittent trouble
 // with where the popped state returned.  Rather than continue trying to solve that, I decided
-// to start over with all the data management in member variables, so there is almost no context
+// to start over with all the data management in a State container, so there is almost no context
 // switching here.
+//
+// One of my goals was to eliminate using the var keyword.  I found this problematic, because all the auxiliary
+// routines would have to receive the state as a parameter, return the modified state, and the caller then use
+// context.becomes() to make the state changes available to the next message.  Doable, but really clutters the code.
+// And this class is already hard enough to read as it is.  Trying to decompose the variable pieces of state into
+// their own modules gets us right back to passing state around in a parameter again.  So I caved, and went with
+// a single var, state of type State, to at least gather the Actor state in one spot.
 //
 // It also bothered me greatly at how large the Receive handlers became for this assignment.  As
 // I was trying to think of a better way, I remembered that Receive handlers are partial functions,
@@ -45,7 +52,6 @@ object Replica {
   def props(arbiter: ActorRef, persistenceProps: Props): Props = Props(new Replica(arbiter, persistenceProps))
 }
 
-//noinspection ActorMutableStateInspection
 class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with ActorLogging {
   import Replica._
   import Replicator._
@@ -58,13 +64,34 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
       Restart
   }
 
+  /** Holds the state information for this Actor.  Unlike Replicator, Replica has a complex state and it is quite
+    * cumbersome to pass the state around to all message handlers and all support routines, and then combine
+    * state changes from those routines back together.  Breaking down and using 1 var is just more pragmatic in this
+    * case.
+    *
+    * @param persistence  the Actor providing the pretend persistence service
+    * @param kv           the key-value store
+    * @param secondaries  maps between a non-primary replica and its replicator.  The leader does not have a replicator.
+    * @param pendingOperations  maps between IDs and operations that haven't completed
+    * @param pendingReplicates  maps between IDs and Replicate operations that haven't completed
+    * @param pendingPersists  maps between sequence numbers and Persist operations that haven't completed. IDs and
+    *                         sequence numbers are not the same thing.
+    */
+  private case class State(persistence: ActorRef,
+                           kv: Map[String, String],
+                           secondaries: Map[ActorRef, ActorRef],
+                           pendingOperations: Map[Long, PendingOperation],
+                           pendingReplicates: Map[Long, PendingReplicate],
+                           pendingPersists: Map[Long, PendingPersist])
+  //noinspection ActorMutableStateInspection
+  private var state = State(createPersistence, kv = Map.empty, secondaries = Map.empty,
+    pendingOperations = Map.empty, pendingReplicates = Map.empty, pendingPersists = Map.empty)
+
   private def createPersistence = {
     val persistence = context.actorOf(persistenceProps)
     context.watch(persistence)
     persistence
   }
-
-  private var persistence = createPersistence
 
   private case class TimedOut(id: Long)
   private def enableOperationTimeout(id: Long): Unit = {
@@ -76,70 +103,64 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
     case TimedOut(id: Long) =>
       removePendingOperation(id)(_.messageIfFailed)
       removePendingPersist(id)
-      secondaries.get(self).foreach( replicator => removePendingReplicate(id, replicator) )
+      state.secondaries.get(self).foreach( replicator => removePendingReplicate(id, replicator) )
   }
-
-  /*
-   * The contents of this actor is just a suggestion, you can implement it in any way you like.
-   */
-  
-  private var kv = Map.empty[String, String]
-  // a map from secondary replicas to replicators
-  private var secondaries = Map.empty[ActorRef, ActorRef]
 
   private case class PendingOperation(notifyWhenDone: ActorRef,
                                       messageIfSucceeded: Option[Any],
                                       messageIfFailed: Option[Any])
-  private var pendingOperations = Map.empty[Long, PendingOperation]
   private def addPendingOperation(id: Long, notifyWhenDone: ActorRef,
                                   messageIfSucceeded: Option[Any],
                                   messageIfFailed: Option[Any]): Unit = {
-    pendingOperations +=   id -> PendingOperation(notifyWhenDone, messageIfSucceeded, messageIfFailed)
+    state = state.copy(pendingOperations = state.pendingOperations +
+      (id -> PendingOperation(notifyWhenDone, messageIfSucceeded, messageIfFailed)))
   }
   private def removePendingOperation(id: Long)(getMessage: PendingOperation => Option[Any]): Unit = {
-    for (pendingOperation <- pendingOperations.get(id);
+    for (pendingOperation <- state.pendingOperations.get(id);
          message <- getMessage(pendingOperation)) {
       pendingOperation.notifyWhenDone ! message
     }
-    pendingOperations -= id
+    state = state.copy(pendingOperations = state.pendingOperations - id)
   }
 
   private case class PendingReplicate(message: Any, stillWaitingOn: Set[ActorRef])
-  private var pendingReplicates = Map.empty[Long, PendingReplicate]
   private def addPendingReplicate(id: Long, replicate: Replicate): Unit = {
     // Only do this if there are any secondaries, because Leader doesn't have a Replicator.
-    if (secondaries.nonEmpty) {
-      val replicators = secondaries.values.toSet
-      pendingReplicates +=    id -> PendingReplicate(replicate, replicators)
+    if (state.secondaries.nonEmpty) {
+      val replicators = state.secondaries.values.toSet
+      state = state.copy(pendingReplicates =
+        state.pendingReplicates + (id -> PendingReplicate(replicate, replicators)))
       replicators.foreach(_ ! replicate)
     }
   }
   private def removePendingReplicate(id: Long, finished: ActorRef): Unit = {
-    pendingReplicates
+    state.pendingReplicates
       .get(id)
       // remove `finished`, if stillWaitingOn becomes empty set, all pending replicates are done
       .map { pr: PendingReplicate => pr.copy(stillWaitingOn = pr.stillWaitingOn - finished) }
       .foreach {
         case pr: PendingReplicate if pr.stillWaitingOn.isEmpty =>
           // all the replicators have finished so we are done replicating
-          pendingReplicates = pendingReplicates.removed(id)
+          state = state.copy(pendingReplicates = state.pendingReplicates.removed(id))
         case replicationNotAllFinished: PendingReplicate =>
           // we are still awaiting some replication acknowledgements, so update the state for this id.
-          pendingReplicates = pendingReplicates.updated(id, replicationNotAllFinished)
+          state = state.copy(pendingReplicates = state.pendingReplicates.updated(id, replicationNotAllFinished))
       }
   }
 
   private case class PendingPersist(notifyWhenDone: ActorRef, message: Persist)
   private case object SendPendingPersists
-  private var pendingPersists = Map.empty[Long, PendingPersist]
   private def addPendingPersist(notifyWhenDone: ActorRef, seq: Long, persist: Persist): Unit = {
-    pendingPersists +=    seq -> PendingPersist(notifyWhenDone, persist)
-    persistence ! persist
+    state = state.copy(pendingPersists =
+      state.pendingPersists + (seq -> PendingPersist(notifyWhenDone, persist)))
+    state.persistence ! persist
   }
-  private def removePendingPersist(seq: Long): Unit = { pendingPersists -= seq }
+  private def removePendingPersist(seq: Long): Unit = { state = state.copy(
+    pendingPersists = state.pendingPersists - seq)
+  }
 
   private def tryToFinishOperation(id: Long): Unit = {
-    (pendingReplicates.get(id), pendingPersists.get(id)) match {
+    (state.pendingReplicates.get(id), state.pendingPersists.get(id)) match {
       case (None, None) =>
         removePendingOperation(id)(_.messageIfSucceeded)
       case _ =>
@@ -154,19 +175,19 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
 
   private val Gets: Receive = LoggingReceive {
     case Get(key: String, id: Long) =>
-      sender() ! GetResult(key, kv.get(key), id)
+      sender() ! GetResult(key, state.kv.get(key), id)
   }
 
   private val Updates: Receive = LoggingReceive {
     case Insert(key: String, value: String, id: Long) =>
-      kv += key->value
+      state = state.copy(kv = state.kv + (key->value))
       addPendingOperation(id, sender(),
         Some(OperationAck(id)), Some(OperationFailed(id)))
       addPendingReplicate(id, Replicate(key, Some(value), id))
       addPendingPersist(self, id, Persist(key, Some(value), id))
       enableOperationTimeout(id)
     case Remove(key: String, id: Long) =>
-      kv -= key
+      state = state.copy(kv = state.kv - key)
       addPendingOperation(id, sender(),
         Some(OperationAck(id)), Some(OperationFailed(id)))
       addPendingReplicate(id, Replicate(key, None, id))
@@ -185,8 +206,8 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
       ()
     case Snapshot(key: String, value: Option[String], seq: Long) =>
       value match {
-        case Some(v) => kv += key->v
-        case None => kv -= key
+        case Some(v) => state = state.copy(kv = state.kv + (key->v))
+        case None =>    state = state.copy(kv = state.kv - key)
       }
       addPendingOperation(seq, sender(),
         Some(SnapshotAck(key, seq)), None)
@@ -200,9 +221,9 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
       removePendingPersist(seq)
       tryToFinishOperation(seq)
     case SendPendingPersists =>
-      pendingPersists.foreach { case (_, pendingPersist) => persistence ! pendingPersist.message }
-    case Terminated(actor) if actor == persistence =>
-      persistence = createPersistence
+      state.pendingPersists.foreach { case (_, pendingPersist) => state.persistence ! pendingPersist.message }
+    case Terminated(actor) if actor == state.persistence =>
+      state = state.copy(persistence = createPersistence)
       self ! SendPendingPersists
   }
 
@@ -214,39 +235,40 @@ class Replica(val arbiter: ActorRef, persistenceProps: Props) extends Actor with
 
   private def addSecondary(secondary: ActorRef): Unit = {
     val replicator = context.system.actorOf(Replicator.props(secondary))
-    secondaries +=    secondary -> replicator
+    state = state.copy(secondaries = state.secondaries + (secondary -> replicator))
     // Need to "make up" id numbers to use with these new Replicate messages.  Values don't matter,
     // so zipWithIndex is perfect here.
-    kv.zipWithIndex.foreach {
+    state.kv.zipWithIndex.foreach {
       case ((key, value), id) =>
         replicator ! Replicate(key, Some(value), id)
     }
   }
   private def removeSecondary(secondary: ActorRef): Unit = {
-    secondaries.get(secondary).foreach { replicator =>
-      pendingPersists
+    state.secondaries.get(secondary).foreach { replicator =>
+      state.pendingPersists
         .filter { case (_, pendingPersist) => pendingPersist.notifyWhenDone == secondary}
         .foreach { case (seq, pendingPersist) =>
           removePendingPersist(seq)
           tryToFinishOperation(pendingPersist.message.id)
         }
-      pendingReplicates
+      state.pendingReplicates
         .filter { case (_, pendingReplicate) => pendingReplicate.stillWaitingOn.contains(replicator) }
         .foreach { case (id, _) =>
           removePendingReplicate(id, replicator)
           tryToFinishOperation(id)
         }
       context.stop(secondary)  // The replicator will see secondary stopped and stop itself via DeathWatch.
-      secondaries -= secondary
+      state = state.copy(secondaries = state.secondaries - secondary)
     }
   }
 
-  private val UpdateReplicas: Receive = LoggingReceive {
+  private def UpdateReplicas: Receive = LoggingReceive {
     case Replicas(replicas) =>
       val possibleSecondaries = replicas - self
-      val toBeRemoved = secondaries.keySet -- possibleSecondaries
+      val secondariesKeySet = state.secondaries.keySet
+      val toBeRemoved = secondariesKeySet -- possibleSecondaries
       toBeRemoved.foreach(removeSecondary)
-      val newSecondaries = possibleSecondaries -- secondaries.keySet
+      val newSecondaries = possibleSecondaries -- secondariesKeySet
       newSecondaries.foreach(addSecondary)
   }
 
