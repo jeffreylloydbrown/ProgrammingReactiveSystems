@@ -35,7 +35,7 @@ class Replicator(val replica: ActorRef) extends Actor with ActorLogging {
       val seq = sequenceGenerator.next()
       replica ! Snapshot(key, valueOption, seq)
       context.become(Messages(state.copy(
-        state.awaitingSnapshotAcks + (seq -> (sender(), request)))))
+        state.awaitingSnapshotAcks + (seq -> ((sender(), request))))))
 
     case SnapshotAck(_, seq) =>
       state.awaitingSnapshotAcks.get(seq).foreach {
