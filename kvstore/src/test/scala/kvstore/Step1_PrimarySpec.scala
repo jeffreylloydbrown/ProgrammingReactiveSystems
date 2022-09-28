@@ -15,10 +15,11 @@ trait Step1_PrimarySpec { this: KVStoreSuite =>
     ()
   }
 
-  test("Step1-case2: Primary (in isolation) should react properly to Insert, Remove, Get") {
+  private def step1Case2(flaky: Boolean): Unit = {
     val arbiter = TestProbe("arbiter")
+    val name: String = s"step1-case2-primary${if (flaky) "-flaky" else ""}"
     val primary = system.actorOf(Replica.props(arbiter.ref,
-      Persistence.props(flaky = false)), "step1-case2-primary")
+      Persistence.props(flaky)), name)
     val client = session(primary)
 
     arbiter.expectMsg(Join)
@@ -34,5 +35,12 @@ trait Step1_PrimarySpec { this: KVStoreSuite =>
     client.getAndVerify("k1")
   }
 
+  test("Step1-case2: Primary (in isolation) should react properly to Insert, Remove, Get") {
+    step1Case2(flaky = false)
+  }
+
+  test("Flaky Step1-case2: Primary (in isolation) should react properly to Insert, Remove, Get") {
+    step1Case2(flaky = true)
+  }
 
 }

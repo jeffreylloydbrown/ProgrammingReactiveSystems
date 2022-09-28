@@ -68,10 +68,11 @@ trait Step5_PrimaryPersistenceSpec { this: KVStoreSuite =>
     client.waitFailed(setId)
   }
 
-  test("Step5-case4: Primary generates failure after 1 second if global acknowledgement fails") {
+  private def step5Case4(flaky: Boolean): Unit = {
     val arbiter = TestProbe("arbiter")
+    val name = s"step5-case4-primary${if (flaky) "-flaky" else ""}"
     val primary = system.actorOf(Replica.props(arbiter.ref,
-      Persistence.props(flaky = false)), "step5-case4-primary")
+      Persistence.props(flaky)), name)
     val secondary = TestProbe("secondary")
     val client = session(primary)
 
@@ -86,10 +87,18 @@ trait Step5_PrimaryPersistenceSpec { this: KVStoreSuite =>
     }
   }
 
-  test("Step5-case5: Primary acknowledges only after persistence and global acknowledgement") {
+  test("Step5-case4: Primary generates failure after 1 second if global acknowledgement fails") {
+    step5Case4(flaky = false)
+  }
+  test("Flaky Step5-case4: Primary generates failure after 1 second if global acknowledgement fails") {
+    step5Case4(flaky = true)
+  }
+
+  private def step5Case5(flaky: Boolean): Unit = {
     val arbiter = TestProbe("arbiter")
+    val name = s"step5-case5-primary${if (flaky) "-flaky" else ""}"
     val primary = system.actorOf(Replica.props(arbiter.ref,
-      Persistence.props(flaky = false)), "step5-case5-primary")
+      Persistence.props(flaky)), name)
     val secondaryA = TestProbe("secondaryA")
     val secondaryB = TestProbe("secondaryB")
     val client = session(primary)
@@ -106,6 +115,13 @@ trait Step5_PrimaryPersistenceSpec { this: KVStoreSuite =>
     client.nothingHappens(300.milliseconds)
     secondaryB.reply(SnapshotAck("foo", seqB))
     client.waitAck(setId)
+  }
+
+  test("Step5-case5: Primary acknowledges only after persistence and global acknowledgement") {
+    step5Case5(flaky = false)
+  }
+  test("Flaky Step5-case5: Primary acknowledges only after persistence and global acknowledgement") {
+    step5Case5(flaky = true)
   }
 
 }

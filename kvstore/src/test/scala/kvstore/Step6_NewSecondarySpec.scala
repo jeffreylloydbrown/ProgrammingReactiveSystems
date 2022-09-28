@@ -6,10 +6,11 @@ import kvstore.Replicator._
 
 trait Step6_NewSecondarySpec { this: KVStoreSuite =>
 
-  test("Step6-case1: Primary must start replication to new replicas") {
+  private def step6Case1(flaky: Boolean): Unit = {
     val arbiter = TestProbe("arbiter")
+    val name = s"step6-case1-primary${if (flaky) "-flaky" else ""}"
     val primary = system.actorOf(Replica.props(arbiter.ref,
-      Persistence.props(flaky = false)), "step6-case1-primary")
+      Persistence.props(flaky)), name)
     val user = session(primary)
     val secondary = TestProbe("secondary")
 
@@ -30,11 +31,19 @@ trait Step6_NewSecondarySpec { this: KVStoreSuite =>
     user.waitAck(ack2)
   }
 
-  test("Step6-case2: Primary must stop replication to removed replicas and stop Replicator") {
+  test("Step6-case1: Primary must start replication to new replicas") {
+    step6Case1(flaky = false)
+  }
+  test("Flaky Step6-case1: Primary must start replication to new replicas") {
+    step6Case1(flaky = true)
+  }
+
+  private def step6Case2(flaky: Boolean): Unit = {
     val probe = TestProbe("probe")
     val arbiter = TestProbe("arbiter")
+    val name = s"step6-case2-primary${if (flaky) "-flaky" else ""}"
     val primary = system.actorOf(Replica.props(arbiter.ref,
-      Persistence.props(flaky = false)), "step6-case2-primary")
+      Persistence.props(flaky)), name)
     val user = session(primary)
     val secondary = TestProbe("secondary")
 
@@ -54,11 +63,18 @@ trait Step6_NewSecondarySpec { this: KVStoreSuite =>
     ()
   }
 
-  test("Step6-case3: Primary must stop replication to removed replicas and waive their outstanding " +
-    "acknowledgements") {
+  test("Step6-case2: Primary must stop replication to removed replicas and stop Replicator") {
+    step6Case2(flaky = false)
+  }
+  test("Flaky Step6-case2: Primary must stop replication to removed replicas and stop Replicator") {
+    step6Case2(flaky = true)
+  }
+
+  private def step6Case3(flaky: Boolean): Unit = {
     val arbiter = TestProbe("arbiter")
+    val name = s"step6-case3-primary${if (flaky) "-flaky" else ""}"
     val primary = system.actorOf(Replica.props(arbiter.ref,
-      Persistence.props(flaky = false)), "step6-case3-primary")
+      Persistence.props(flaky)), name)
     val user = session(primary)
     val secondary = TestProbe("secondary")
 
@@ -75,6 +91,15 @@ trait Step6_NewSecondarySpec { this: KVStoreSuite =>
     secondary.expectMsg(Snapshot("k1", Some("v2"), 1L))
     arbiter.send(primary, Replicas(Set(primary)))
     user.waitAck(ack2)
+  }
+
+  test("Step6-case3: Primary must stop replication to removed replicas and waive their outstanding " +
+    "acknowledgements") {
+    step6Case3(flaky = false)
+  }
+  test("Flaky Step6-case3: Primary must stop replication to removed replicas and waive their outstanding " +
+    "acknowledgements") {
+    step6Case3(flaky = true)
   }
 
 }
