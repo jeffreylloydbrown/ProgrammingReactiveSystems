@@ -20,27 +20,33 @@ class Replicator(val replica: ActorRef) extends Actor with ActorLogging {
   import Replicator._
   import context.dispatcher
 
-  // map from sequence number to pair of originator and request
-  var awaitingSnapshotAcks = Map.empty[Long, (ActorRef, Replicate)]
+  /** State holds the state information for this actor.  Use it with context.becomes()
+    * to make actor state changes between messages.
+    *
+    * @param awaitingSnapshotAcks map for sequence number to pair of originator and replicate request
+    */
+  private case class State(awaitingSnapshotAcks: Map[Long, (ActorRef, Replicate)])
 
   private val sequenceGenerator = new LongGenerator()
 
 
-  def receive: Receive = LoggingReceive {
+  private def Messages(state: State): Receive = LoggingReceive {
     case request @ Replicate(key, valueOption, _) =>
       val seq = sequenceGenerator.next()
-      awaitingSnapshotAcks +=   seq -> (sender(), request)
       replica ! Snapshot(key, valueOption, seq)
+      context.become(Messages(state.copy(
+        state.awaitingSnapshotAcks + (seq -> (sender(), request)))))
 
     case SnapshotAck(_, seq) =>
-      awaitingSnapshotAcks.get(seq).foreach {
+      state.awaitingSnapshotAcks.get(seq).foreach {
         case (originator, replicate) =>
           originator ! Replicated(replicate.key, replicate.id)
       }
-      awaitingSnapshotAcks -= seq // don't modify the container INSIDE the loop processing it!
+      // don't modify the container INSIDE the loop processing it!
+      context.become(Messages(state.copy(state.awaitingSnapshotAcks - seq)))
 
     case ResendSnapshots =>
-      awaitingSnapshotAcks.foreach {
+      state.awaitingSnapshotAcks.foreach {
         case (seq, (_, replicate)) =>
           replica ! Snapshot(replicate.key, replicate.valueOption, seq)
       }
@@ -48,6 +54,8 @@ class Replicator(val replica: ActorRef) extends Actor with ActorLogging {
     case Terminated(`replica`) =>
       context.stop(self)
   }
+
+  def receive: Receive = Messages(State(awaitingSnapshotAcks = Map.empty))
 
   // If the replica goes away, so do we.
   context.watch(replica)
