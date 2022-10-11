@@ -30,8 +30,14 @@ object Transactor {
     * @param sessionTimeout Delay before rolling back the pending modifications and
     *                       terminating the session
     */
+//  def apply[T](value: T, sessionTimeout: FiniteDuration): Behavior[Command[T]] = SelectiveReceive(30,
+//    idle(value, sessionTimeout) match {
+//      case i: Behavior[PrivateCommand[T]] => i.asInstanceOf[Behavior[Command[T]]]
+//    }
+//  )
+  // Jump to Behavior.narrow to see why we have to do this here.
   def apply[T](value: T, sessionTimeout: FiniteDuration): Behavior[Command[T]] =
-      ???
+    SelectiveReceive(30, idle(value, sessionTimeout).narrow[Command[T]])
 
   /**
     * @return A behavior that defines how to react to any [[PrivateCommand]] when the transactor
@@ -54,7 +60,17 @@ object Transactor {
     *   - Messages other than [[Begin]] should not change the behavior.
     */
   private def idle[T](value: T, sessionTimeout: FiniteDuration): Behavior[PrivateCommand[T]] =
-    ???
+    Behaviors.receive[PrivateCommand[T]] {
+      case (ctx, Begin(replyTo)) =>
+        val session = ctx.spawnAnonymous(
+          sessionHandler(value, ctx.self, Set.empty))
+        ctx.watchWith(session, RolledBack(session))
+        ctx.scheduleOnce(sessionTimeout, ctx.self, RolledBack(session))
+        replyTo ! session
+        inSession(value, sessionTimeout, session)
+      case _ =>
+        Behaviors.ignore
+    }
 
   /**
     * @return A behavior that defines how to react to [[PrivateCommand]] messages when the transactor has
@@ -67,7 +83,15 @@ object Transactor {
     * @param sessionRef Reference to the child [[Session]] actor
     */
   private def inSession[T](rollbackValue: T, sessionTimeout: FiniteDuration, sessionRef: ActorRef[Session[T]]): Behavior[PrivateCommand[T]] =
-    ???
+    Behaviors.receive {
+      case (_, Committed(_, value)) =>
+        idle(value, sessionTimeout)
+      case (ctx, RolledBack(session)) =>
+        ctx.stop(session)
+        idle(rollbackValue, sessionTimeout)
+      case (_, Begin(_)) =>
+        Behaviors.unhandled
+    }
 
   /**
     * @return A behavior handling [[Session]] messages. See in the instructions
@@ -78,6 +102,22 @@ object Transactor {
     * @param done Set of already applied [[Modify]] messages
     */
   private def sessionHandler[T](currentValue: T, commit: ActorRef[Committed[T]], done: Set[Long]): Behavior[Session[T]] =
-      ???
+    Behaviors.receive[Session[T]] {
+      case (_, Extract(f, replyTo)) =>
+        replyTo ! f(currentValue)
+        Behaviors.same
+      case (_, Modify(_, id, reply, replyTo)) if done.contains(id) =>
+        replyTo ! reply
+        Behaviors.same
+      case (_, Modify(f, id, reply, replyTo)) =>
+        replyTo ! reply
+        sessionHandler(f(currentValue), commit, done + id)
+      case (ctx, Commit(reply, replyTo)) =>
+        replyTo ! reply
+        commit ! Committed(ctx.self, currentValue)
+        Behaviors.stopped
+      case (_, Rollback()) =>
+        Behaviors.stopped
+    }
 
 }
