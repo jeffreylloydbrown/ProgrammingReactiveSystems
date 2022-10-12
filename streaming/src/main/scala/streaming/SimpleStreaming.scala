@@ -40,7 +40,7 @@ object SimpleStreaming extends ExtraStreamOps with SimpleStreamingInterface {
    * however by chaining multiple Flows with each-other.
    */
   def filterUsingPreviousFlowAndMapToStringsUsingTwoVias(ints: Source[Int, NotUsed], toString: Flow[Int, String, _]): Source[String, NotUsed] =
-    ???
+    ints.via(filterEvenValues).via(toString)
 
   /**
    * You can also "trim" a stream, by taking a number of elements (or by predicate).
