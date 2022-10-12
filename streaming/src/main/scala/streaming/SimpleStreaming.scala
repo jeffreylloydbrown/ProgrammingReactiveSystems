@@ -47,7 +47,7 @@ object SimpleStreaming extends ExtraStreamOps with SimpleStreamingInterface {
    * In this method, take the first element only -- the stream should be then completed once the first element has arrived.
    */
   def firstElementSource(ints: Source[Int, NotUsed]): Source[Int, NotUsed] =
-    ???
+    ints.take(1)
 
   /**
    * This time we will actually *run* the stream.
