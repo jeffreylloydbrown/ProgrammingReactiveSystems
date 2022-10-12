@@ -20,7 +20,7 @@ object SimpleStreaming extends ExtraStreamOps with SimpleStreamingInterface {
 
   /** Filter elements which are even (use the modulo operator: `%`) */
   def filterEvenValues: Flow[Int, Int, NotUsed] =
-    ???
+    Flow[Int].filter(_ % 2 == 0)
 
   /**
    * Rather than re-using operations as `operation(source): Source`,
@@ -30,7 +30,7 @@ object SimpleStreaming extends ExtraStreamOps with SimpleStreamingInterface {
    * try to implement this method by composing the previous two.
    */
   def filterUsingPreviousFilterFlowAndMapToStrings(ints: Source[Int, NotUsed]): Source[String, NotUsed] =
-    ???
+    mapToStrings(ints.via(filterEvenValues))
 
   /**
    * You likely noticed that the `via` composition style reads more nicely since it is possible to read it
