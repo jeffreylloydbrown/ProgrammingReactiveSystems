@@ -16,7 +16,7 @@ object SimpleStreaming extends ExtraStreamOps with SimpleStreamingInterface {
 
   /** Change each of the streamed elements to their String values */
   def mapToStrings(ints: Source[Int, NotUsed]): Source[String, NotUsed] =
-    ???
+    ints.map(_.toString)
 
   /** Filter elements which are even (use the modulo operator: `%`) */
   def filterEvenValues: Flow[Int, Int, NotUsed] =
