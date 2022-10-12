@@ -3,6 +3,7 @@ package streaming
 import akka.NotUsed
 import akka.stream.Materializer
 import akka.stream.scaladsl.{Flow, Sink, Source}
+
 import scala.concurrent.Future
 
 /**
@@ -56,7 +57,7 @@ object SimpleStreaming extends ExtraStreamOps with SimpleStreamingInterface {
    * Notes: Compare the signatures of `run` and `runWith`
    */
   def firstElementFuture(ints: Source[Int, NotUsed])(implicit mat: Materializer): Future[Int] =
-    ???
+    ints.runWith(Sink.head)
 
   // --- failure handling ---
 
@@ -64,14 +65,14 @@ object SimpleStreaming extends ExtraStreamOps with SimpleStreamingInterface {
    * Recover [[IllegalStateException]] values to a -1 value
    */
   def recoverSingleElement(ints: Source[Int, NotUsed]): Source[Int, NotUsed] =
-    ???
+    ints.recover { case _: IllegalStateException => -1 }
 
   /**
    * Recover [[IllegalStateException]] values to the provided fallback Source
    *
    */
   def recoverToAlternateSource(ints: Source[Int, NotUsed], fallback: Source[Int, NotUsed]): Source[Int, NotUsed] =
-    ???
+    ints.recoverWithRetries(1, { case _: IllegalStateException => fallback } )
 
   // working with rate
 
@@ -89,7 +90,7 @@ object SimpleStreaming extends ExtraStreamOps with SimpleStreamingInterface {
    * If you'd like to see the exact events happening you can call `.logAllEvents` on the Flow you are returning here
    */
   def sumUntilBackpressureGoesAway: Flow[Int, Int, _] =
-    ???
+    Flow[Int].conflate( (sum, elem) => sum + elem )
 
   /**
    * A faster downstream wants to consume elements, yet the upstream is slow at providing them.
@@ -102,6 +103,6 @@ object SimpleStreaming extends ExtraStreamOps with SimpleStreamingInterface {
    * See also [[Iterator.continually]]
    */
   def keepRepeatingLastObservedValue: Flow[Int, Int, _] =
-    ???
+    Flow[Int].extrapolate(Iterator.continually(_))
 
 }
