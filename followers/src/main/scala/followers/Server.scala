@@ -133,11 +133,32 @@ object Server extends ServerModuleInterface {
     * @return Whether the given user should be notified by the incoming `Event`,
     *         given the current state of `Followers`. See [[Event]] for more
     *         information of when users should be notified about them.
+    *
+    *         - Follow: Only the To User Id should be notified
+    *         - Unfollow: No clients should be notified
+    *         - Broadcast: All connected user clients should be notified
+    *         - Private Message: Only the To User Id should be notified
+    *         - Status Update: All current followers of the From User ID should be notified
+    *
     * @param userId Id of the user
     * @param eventAndFollowers Event and current state of followers
     */
-  def isNotified(userId: Int)(eventAndFollowers: (Event, Followers)): Boolean =
-    ???
+  def isNotified(userId: Int)(eventAndFollowers: (Event, Followers)): Boolean = {
+    val (event, follows) = eventAndFollowers
+
+    event match {
+      case Follow(_, _, toUserId) =>
+        userId == toUserId
+      case _: Unfollow =>
+        false
+      case _: Broadcast =>
+        true
+      case PrivateMsg(_, _, toUserId) =>
+        userId == toUserId
+      case StatusUpdate(_, fromUserId) =>
+        follows.getOrElse(userId, Set.empty).contains(fromUserId)
+    }
+  }
 
   // Utilities to temporarily have unimplemented parts of the program
   private def unimplementedFlow[A, B, C]: Flow[A, B, C] =
