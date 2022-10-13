@@ -140,6 +140,14 @@ class FollowersSuite extends munit.FunSuite with TestKitBase {
     assert(isNotified(42)((Event.StatusUpdate(1, 12), Map(42 -> Set(12)))))
   }
 
+  test("isNotified: never notify users of unfollow messages") {
+    for (userId <- 1 to 1000) {
+      val sequenceNr = userId + 1
+      val toUserId = userId + 42
+      assert(!isNotified(userId)((Event.Unfollow(sequenceNr, userId, toUserId), Map(userId -> Set(toUserId)))))
+    }
+  }
+
 
   test("eventsFlow: downstream should receive completion when the event source is completed (3pts)") {
     val server = new Server()
