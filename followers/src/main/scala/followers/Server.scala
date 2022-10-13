@@ -8,7 +8,7 @@ import akka.util.ByteString
 import followers.model.Event.{Broadcast, Follow, PrivateMsg, StatusUpdate, Unfollow}
 import followers.model.{Event, Followers, Identity}
 
-import scala.collection.immutable.SortedSet
+import scala.collection.immutable.{SortedSet, Iterable}
 import scala.collection.mutable.{ArrayBuffer, ListBuffer}
 import scala.concurrent.{ExecutionContext, Future, Promise}
 
@@ -233,9 +233,15 @@ class Server()(implicit executionContext: ExecutionContext, materializer: Materi
     * Broadcast:       All connected user clients should be notified
     * Private Message: Only the To User Id should be notified
     * Status Update:   All current followers of the From User ID should be notified
+    *
+    * broadcastOut is a source of (Event, Followers), but we need a ByteString as the final
+    * result.  All of the Events have a render() method, but you have to treat that result as
+    * an array not a simple string....
     */
   def outgoingFlow(userId: Int): Source[ByteString, NotUsed] =
-    ???
+    broadcastOut
+      .filter(isNotified(userId)(_))
+      .mapConcat { case (event, _) => Iterable(event.render) }
 
   /**
    * The "final form" of the client flow.
