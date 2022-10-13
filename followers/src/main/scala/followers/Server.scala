@@ -5,11 +5,10 @@ import akka.event.Logging
 import akka.stream.scaladsl.{BroadcastHub, Flow, Framing, Keep, MergeHub, Sink, Source}
 import akka.stream.{ActorAttributes, Materializer}
 import akka.util.ByteString
-import followers.model.Event.{Broadcast, Follow, PrivateMsg, StatusUpdate, Unfollow}
+import followers.model.Event._
 import followers.model.{Event, Followers, Identity}
 
-import scala.collection.immutable.{SortedSet, Iterable}
-import scala.collection.mutable.{ArrayBuffer, ListBuffer}
+import scala.collection.immutable.Iterable
 import scala.concurrent.{ExecutionContext, Future, Promise}
 
 /**
@@ -173,7 +172,7 @@ object Server extends ServerModuleInterface {
   * @param executionContext Execution context for `Future` values transformations
   * @param materializer Stream materializer
   */
-class Server()(implicit executionContext: ExecutionContext, materializer: Materializer)
+class Server(implicit executionContext: ExecutionContext, materializer: Materializer)
   extends ServerInterface with ExtraStreamOps {
   import Server._
 
@@ -244,29 +243,29 @@ class Server()(implicit executionContext: ExecutionContext, materializer: Materi
       .mapConcat { case (event, _) => Iterable(event.render) }
 
   /**
-   * The "final form" of the client flow.
-   *
-   * Clients will connect to this server and send their id as an Identity message (e.g. "21323\n").
-   *
-   * The server should establish a link from the event source towards the clients, in such way that they
-   * receive only the events that they are interested about.
-   *
-   * The incoming side of this flow needs to extract the client id to then properly construct the outgoing Source,
-   * as it will need this identifier to notify the server which data it is interested about.
-   *
-   * Hints:
-   *   - since the clientId will be emitted as a materialized value of `identityParserSink`,
-   *     you may need to use mapMaterializedValue to side effect it into a shared Promise/Future that the Source
-   *     side can utilise to construct such Source "from that client id future".
-   *   - Remember to use `via()` to connect a `Flow`, and `to()` to connect a `Sink`.
-   */
+    * The "final form" of the client flow.
+    *
+    * Clients will connect to this server and send their id as an Identity message (e.g. "21323\n").
+    *
+    * The server should establish a link from the event source towards the clients, in such way that they
+    * receive only the events that they are interested about.
+    *
+    * The incoming side of this flow needs to extract the client id to then properly construct the outgoing Source,
+    * as it will need this identifier to notify the server which data it is interested about.
+    *
+    * Hints:
+    *   - since the clientId will be emitted as a materialized value of `identityParserSink`,
+    *     you may need to use mapMaterializedValue to side effect it into a shared Promise/Future that the Source
+    *     side can utilise to construct such Source "from that client id future".
+    *   - Remember to use `via()` to connect a `Flow`, and `to()` to connect a `Sink`.
+    */
   def clientFlow(): Flow[ByteString, ByteString, NotUsed] = {
     val clientIdPromise = Promise[Identity]()
-//    clientIdPromise.future.map(id => actorSystem.log.info("Connected follower: {}", id.userId))
+    //    clientIdPromise.future.map(id => actorSystem.log.info("Connected follower: {}", id.userId))
 
     // A sink that parses the client identity and completes `clientIdPromise` with it
     val incoming: Sink[ByteString, NotUsed] =
-      ???
+      Flow[ByteString].to(identityParserSink.mapMaterializedValue(clientIdPromise.completeWith))
 
     val outgoing = Source.futureSource(clientIdPromise.future.map { identity =>
       outgoingFlow(identity.userId)
