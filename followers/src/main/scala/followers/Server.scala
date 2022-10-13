@@ -196,12 +196,12 @@ class Server()(implicit executionContext: ExecutionContext, materializer: Materi
       * of the followers Map.
       */
     val incomingDataFlow: Flow[ByteString, (Event, Followers), NotUsed] =
-      unimplementedFlow
+      eventParserFlow.via(reintroduceOrdering).via(followersFlow)
 
     // Wires the MergeHub and the BroadcastHub together and runs the graph
-    MergeHub.source[ByteString](256)
+    MergeHub.source[ByteString](MaxFrameSize)
       .via(incomingDataFlow)
-      .toMat(BroadcastHub.sink(256))(Keep.both)
+      .toMat(BroadcastHub.sink(MaxFrameSize))(Keep.both)
       .withAttributes(ActorAttributes.logLevels(Logging.DebugLevel, Logging.DebugLevel, Logging.DebugLevel))
       .run()
   }
@@ -220,7 +220,7 @@ class Server()(implicit executionContext: ExecutionContext, materializer: Materi
     * `Flow.fromSinkAndSourceCoupled` to find how to achieve that.
     */
   val eventsFlow: Flow[ByteString, Nothing, NotUsed] =
-    unimplementedFlow
+    Flow.fromSinkAndSourceCoupled(inboundSink, Source.maybe)
 
   /**
     * @return The source of events for the given user
