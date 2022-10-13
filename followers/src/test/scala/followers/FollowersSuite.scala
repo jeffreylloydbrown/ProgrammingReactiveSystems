@@ -13,7 +13,6 @@ import followers.model.{Event, Identity}
 
 import scala.concurrent.{Await, Future}
 import scala.concurrent.duration.DurationInt
-import scala.util.Random
 
 class FollowersSuite extends munit.FunSuite with TestKitBase {
   implicit lazy val system: ActorSystem = ActorSystem("FollowersSuite")
@@ -79,6 +78,19 @@ class FollowersSuite extends munit.FunSuite with TestKitBase {
     assertEquals(got, incoming.sortBy(_.sequenceNr))
   }
 
+  test("reintroduceOrdering: reusing a sequence number doesn't affect the pipeline") {
+    val incoming = List(
+      Event.Follow(2, 1, 2),
+      Event.Follow(1, 1, 3),
+      Event.Follow(3, 1, 4),
+      Event.Follow(1, 2, 3)  // shouldn't appear in results
+    )
+
+    val sorted = Source(incoming) via reintroduceOrdering
+    val got = await(sorted.runWith(Sink.seq))
+    assertEquals(got, incoming.filterNot(_.fromUserId == 2).sortBy(_.sequenceNr))
+  }
+
 
   test("followersFlow: add a follower (3pts)") {
     val got = await(
@@ -126,6 +138,14 @@ class FollowersSuite extends munit.FunSuite with TestKitBase {
 
   test("isNotified: notify the followers of an user that updates his status (3pts)") {
     assert(isNotified(42)((Event.StatusUpdate(1, 12), Map(42 -> Set(12)))))
+  }
+
+  test("isNotified: never notify users of unfollow messages") {
+    for (userId <- 1 to 1000) {
+      val sequenceNr = userId + 1
+      val toUserId = userId + 42
+      assert(!isNotified(userId)((Event.Unfollow(sequenceNr, userId, toUserId), Map(userId -> Set(toUserId)))))
+    }
   }
 
 
