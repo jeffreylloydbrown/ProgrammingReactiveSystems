@@ -16,10 +16,12 @@ import scala.concurrent.{ExecutionContext, Future, Promise}
   */
 object Server extends ServerModuleInterface {
 
+  private val MaxFrameSize = 256
+
   /**
     * A flow that consumes chunks of bytes and produces `String` messages.
     *
-    * Each incoming chunk of bytes doesn’t necessarily contain ''exactly one'' message
+    * Each incoming chunk of bytes doesn't necessarily contain ''exactly one'' message
     * payload (it can contain fragments of payloads only). You have to process these
     * chunks to produce ''frames'' containing exactly one message payload.
     *
@@ -31,7 +33,9 @@ object Server extends ServerModuleInterface {
     * Hint: you may find the [[Framing]] flows useful.
     */
   val reframedFlow: Flow[ByteString, String, NotUsed] =
-    unimplementedFlow
+    Flow[ByteString]
+      .via(Framing.delimiter(ByteString("\n"), MaxFrameSize))
+      .map(_.utf8String)
 
   /**
     * A flow that consumes chunks of bytes and produces [[Event]] messages.
