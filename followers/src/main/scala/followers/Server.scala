@@ -8,6 +8,7 @@ import akka.util.ByteString
 import followers.model.{Event, Followers, Identity}
 
 import scala.collection.immutable.SortedSet
+import scala.collection.mutable.{ArrayBuffer, ListBuffer}
 import scala.concurrent.{ExecutionContext, Future, Promise}
 
 /**
@@ -78,7 +79,27 @@ object Server extends ServerModuleInterface {
     * operation around in the operator.
     */
   val reintroduceOrdering: Flow[Event, Event, NotUsed] =
-    unimplementedFlow
+    Flow[Event].statefulMapConcat { () =>
+      var nextSequenceNr = 1
+      var idsNotYetEmitted = Map.empty[Int, Event]
+
+      event =>
+        if (event.sequenceNr > nextSequenceNr) {
+          // remember out-of-order things to emit later
+          idsNotYetEmitted += (event.sequenceNr -> event)
+          Nil
+        } else if (event.sequenceNr < nextSequenceNr) {
+          // this case should never happen, but if it does ignore it don't throw
+          Nil
+        } else {
+          // we've found the next event to emit, but we might also have other events we can emit with it.
+          val moreIdsToEmit = LazyList.from(nextSequenceNr+1).takeWhile(idsNotYetEmitted.contains(_))
+          val events = moreIdsToEmit.foldLeft(List(event)){ (acc, id) => acc :+ idsNotYetEmitted(id) }
+          idsNotYetEmitted = idsNotYetEmitted -- moreIdsToEmit  // so the map doesn't just grow and grow
+          nextSequenceNr += events.length  // no +1, `event` is at `events.head`
+          events
+        }
+    }
 
   /**
     * A flow that associates a state of [[Followers]] to
