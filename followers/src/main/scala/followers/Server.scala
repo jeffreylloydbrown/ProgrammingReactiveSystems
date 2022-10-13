@@ -59,9 +59,11 @@ object Server extends ServerModuleInterface {
     * Note that you may need the Sink's materialized value; you may
     * want to compare the signatures of `Flow.to` and `Flow.toMat`
     * (and have a look at `Keep.right`).
+    *
+    * "Sink that will look for the first..." means "use Sink.head".
     */
   val identityParserSink: Sink[ByteString, Future[Identity]] =
-    unimplementedSink
+    reframedFlow.map(Identity.parse).toMat(Sink.head)(Keep.right)
 
   /**
     * A flow that consumes unordered messages and produces messages ordered by `sequenceNr`.
