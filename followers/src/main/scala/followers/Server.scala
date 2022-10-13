@@ -159,11 +159,6 @@ object Server extends ServerModuleInterface {
     }
   }
 
-  // Utilities to temporarily have unimplemented parts of the program
-  private def unimplementedFlow[A, B, C]: Flow[A, B, C] =
-    Flow.fromFunction[A, B](_ => ???).mapMaterializedValue(_ => ??? : C)
-
-  private def unimplementedSink[A, B]: Sink[A, B] = Sink.ignore.mapMaterializedValue(_ => ??? : B)
 }
 
 /**
